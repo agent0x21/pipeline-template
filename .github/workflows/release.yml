@@ -182,15 +182,16 @@ jobs:
           echo "  ${IMAGE}:latest"
 
           docker build \
+            --no-cache \
             --file "apps/${SERVICE}/Dockerfile" \
             --build-arg VERSION="${VERSION}" \
             --label "org.opencontainers.image.title=${SERVICE}" \
             --label "org.opencontainers.image.description=${SERVICE} service" \
-            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             --label "org.opencontainers.image.version=${VERSION}" \
             --tag "${IMAGE}:${VERSION}" \
-            --tag "${IMAGE}:latest" \
+            --tag "${IMAGE}" \
             .
 
       - name: Push Docker image
