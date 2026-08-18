@@ -189,6 +189,7 @@ jobs:
           echo "  ${IMAGE}:latest"
 
           docker build \
+            --file "apps/${SERVICE}/Dockerfile" \
             --build-arg VERSION="${VERSION}" \
             --label "org.opencontainers.image.title=${SERVICE}" \
             --label "org.opencontainers.image.description=${SERVICE} service" \
@@ -199,7 +200,7 @@ jobs:
             --tag "${IMAGE}:${MAJOR}.${MINOR}" \
             --tag "${IMAGE}:${MAJOR}" \
             --tag "${IMAGE}:latest" \
-            "apps/${SERVICE}"
+            .
 
       - name: Push Docker image
         shell: bash
@@ -255,3 +256,9 @@ jobs:
             echo "- \`${{ steps.image.outputs.image }}:${{ steps.version.outputs.major }}\`"
             echo "- \`${{ steps.image.outputs.image }}:latest\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out of GitHub Container Registry
+        if: always()
+        shell: bash
+        run: |
+          docker logout ghcr.io || true
