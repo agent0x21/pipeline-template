@@ -1,8 +1,7 @@
 ## .NET build artifacts
 bin/
-obj/Debug/
 **/bin
-**/obj
+/obj/Debug/
 .git
 .github
 out/
