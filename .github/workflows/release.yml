@@ -129,9 +129,6 @@ jobs:
 
           echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
-          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
-          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Verify release tag does not exist
@@ -179,13 +176,9 @@ jobs:
           SERVICE="${{ inputs.service }}"
           IMAGE="${{ steps.image.outputs.image }}"
           VERSION="${{ steps.version.outputs.version }}"
-          MAJOR="${{ steps.version.outputs.major }}"
-          MINOR="${{ steps.version.outputs.minor }}"
 
           echo "Building:"
           echo "  ${IMAGE}:${VERSION}"
-          echo "  ${IMAGE}:${MAJOR}.${MINOR}"
-          echo "  ${IMAGE}:${MAJOR}"
           echo "  ${IMAGE}:latest"
 
           docker build \
@@ -197,8 +190,6 @@ jobs:
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             --label "org.opencontainers.image.version=${VERSION}" \
             --tag "${IMAGE}:${VERSION}" \
-            --tag "${IMAGE}:${MAJOR}.${MINOR}" \
-            --tag "${IMAGE}:${MAJOR}" \
             --tag "${IMAGE}:latest" \
             .
 
@@ -209,12 +200,8 @@ jobs:
 
           IMAGE="${{ steps.image.outputs.image }}"
           VERSION="${{ steps.version.outputs.version }}"
-          MAJOR="${{ steps.version.outputs.major }}"
-          MINOR="${{ steps.version.outputs.minor }}"
 
           docker push "${IMAGE}:${VERSION}"
-          docker push "${IMAGE}:${MAJOR}.${MINOR}"
-          docker push "${IMAGE}:${MAJOR}"
           docker push "${IMAGE}:latest"
 
       - name: Create Git release tag
@@ -252,8 +239,6 @@ jobs:
             echo "Published tags:"
             echo
             echo "- \`${{ steps.image.outputs.image }}:${{ steps.version.outputs.version }}\`"
-            echo "- \`${{ steps.image.outputs.image }}:${{ steps.version.outputs.major }}.${{ steps.version.outputs.minor }}\`"
-            echo "- \`${{ steps.image.outputs.image }}:${{ steps.version.outputs.major }}\`"
             echo "- \`${{ steps.image.outputs.image }}:latest\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
