@@ -1,0 +1,8 @@
+packages:
+  - apps/react
+  - apps/next
+  - apps/express
+
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver

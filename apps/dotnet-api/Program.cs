@@ -20,4 +20,6 @@ app.UseAuthorization();
 
 app.MapControllers();
 
+app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "dotnet-api" }));
+
 app.Run();
