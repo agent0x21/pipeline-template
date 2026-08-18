@@ -20,13 +20,12 @@ RUN dotnet publish \
     -p:Version="${VERSION}" \
     -p:InformationalVersion="${VERSION}"
 
-
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
 ARG VERSION=0.0.0
 
-ENV ASPNETCORE_URLS=http://+:8080
-ENV APP_VERSION=${VERSION}
+ENV ASPNETCORE_URLS=http://+:8080 \
+    APP_VERSION=${VERSION}
 
 LABEL org.opencontainers.image.version="${VERSION}"
 
