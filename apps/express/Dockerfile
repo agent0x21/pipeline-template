@@ -25,7 +25,7 @@ RUN pnpm \
     deploy /deploy/express
 
 
-FROM dhi.io/node:24-alpine AS runtime
+FROM dhi.io/node:24-alpine-dev AS runtime
 
 ARG VERSION=0.0.0
 

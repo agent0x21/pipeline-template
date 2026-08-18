@@ -29,7 +29,7 @@ COPY apps/next ./apps/next
 RUN pnpm --filter @templates/next build
 
 
-FROM dhi.io/node:24-alpine AS runtime
+FROM dhi.io/node:24-alpine-dev AS runtime
 
 ARG VERSION=0.0.0
 
