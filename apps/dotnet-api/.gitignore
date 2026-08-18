@@ -1,7 +1,10 @@
 ## .NET build artifacts
 bin/
 obj/Debug/
-
+**/bin
+**/obj
+.git
+.github
 out/
 
 ## Visual Studio / Rider / VS Code
