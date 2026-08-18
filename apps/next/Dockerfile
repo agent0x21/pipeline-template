@@ -29,7 +29,7 @@ COPY apps/next ./apps/next
 RUN pnpm --filter @templates/next build
 
 
-FROM dhi.io/node:24-alpine-dev AS runtime
+FROM dhi.io/node:24-alpine AS runtime
 
 ARG VERSION=0.0.0
 
@@ -43,33 +43,21 @@ LABEL org.opencontainers.image.version="${VERSION}"
 
 WORKDIR /app
 
-RUN addgroup --system --gid 1001 nodejs \
-    && adduser --system --uid 1001 nextjs
-
 COPY --from=build \
-    --chown=nextjs:nodejs \
+    --chown=65532:65532 \
     /workspace/apps/next/public \
     ./public
 
 COPY --from=build \
-    --chown=nextjs:nodejs \
+    --chown=65532:65532 \
     /workspace/apps/next/.next/standalone \
     ./
 
 COPY --from=build \
-    --chown=nextjs:nodejs \
+    --chown=65532:65532 \
     /workspace/apps/next/.next/static \
     ./apps/next/.next/static
 
-USER nextjs
-
 EXPOSE 3000
-
-HEALTHCHECK \
-    --interval=30s \
-    --timeout=3s \
-    --start-period=10s \
-    --retries=3 \
-    CMD wget --quiet --tries=1 --spider http://localhost:3000/health || exit 1
 
 CMD ["node", "apps/next/server.js"]
