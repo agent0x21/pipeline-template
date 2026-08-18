@@ -36,51 +36,61 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
+              
           BEFORE="${{ github.event.before }}"
           AFTER="${{ github.sha }}"
-
+              
+          echo "Comparing:"
+          echo "  before: $BEFORE"
+          echo "  after:  $AFTER"
+              
+          # First commit on a new branch can have an all-zero BEFORE SHA.
           if [[ "$BEFORE" =~ ^0+$ ]]; then
-            BEFORE="${AFTER}^"
+            if git rev-parse "${AFTER}^" >/dev/null 2>&1; then
+              BEFORE="${AFTER}^"
+            else
+              BEFORE=""
+            fi
           fi
-
-          CHANGED_FILES="$(
-            git diff --name-only "$BEFORE" "$AFTER"
-          )"
-
+              
+          if [ -n "$BEFORE" ]; then
+            CHANGED_FILES="$(git diff --name-only "$BEFORE" "$AFTER")"
+          else
+            CHANGED_FILES="$(git ls-files)"
+          fi
+              
+          echo
           echo "Changed files:"
           echo "$CHANGED_FILES"
-
+              
           CHANGED_SERVICES="$(
             echo "$CHANGED_FILES" \
-              | awk -F/ '
-                  $1 == "apps" &&
-                  (
-                    $2 == "react" ||
-                    $2 == "next" ||
-                    $2 == "express" ||
-                    $2 == "dotnet-api"
-                  ) {
-                    print $2
-                  }
-                ' \
+              | awk -F/ '$1 == "apps" && ($2 == "react" || $2 == "next" || $2 == "express" || $2 == "dotnet-api") { print $2 }' \
               | sort -u
           )"
-
+              
           if [ -z "$CHANGED_SERVICES" ]; then
+            echo
+            echo "No service changes detected."
+              
             echo 'services=[]' >> "$GITHUB_OUTPUT"
             echo 'has_changes=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
+              
+          echo
+          echo "Changed services:"
+          echo "$CHANGED_SERVICES"
+              
           JSON="$(
             echo "$CHANGED_SERVICES" \
               | jq -R . \
               | jq -s -c .
           )"
-
-          echo "Changed services: $JSON"
-
+              
+          echo
+          echo "Service matrix: $JSON"
+              
           echo "services=$JSON" >> "$GITHUB_OUTPUT"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
