@@ -2,6 +2,10 @@ packages:
   - apps/react
   - apps/next
   - apps/express
+  - apps/*
+  - packages/*
+
+injectWorkspacePackages: true
 
 ignoredBuiltDependencies:
   - sharp

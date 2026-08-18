@@ -9,7 +9,8 @@ app.use(express.json());
 app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
-    service: "express"
+    service: "express",
+    version: process.env.APP_VERSION ?? "unknown",
   });
 });
 

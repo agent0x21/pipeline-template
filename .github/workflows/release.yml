@@ -1,0 +1,257 @@
+name: Release service
+
+run-name: Release ${{ inputs.service }} (${{ inputs.bump }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service to release
+        required: true
+        type: choice
+        options:
+          - react
+          - next
+          - express
+          - dotnet-api
+
+      bump:
+        description: Semantic version bump
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ inputs.service }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release ${{ inputs.service }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate service
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SERVICE="${{ inputs.service }}"
+
+          case "$SERVICE" in
+            react|next|express|dotnet-api)
+              ;;
+            *)
+              echo "Unsupported service: $SERVICE"
+              exit 1
+              ;;
+          esac
+
+          if [ ! -d "apps/$SERVICE" ]; then
+            echo "Service directory does not exist: apps/$SERVICE"
+            exit 1
+          fi
+
+          if [ ! -f "apps/$SERVICE/Dockerfile" ]; then
+            echo "Dockerfile does not exist: apps/$SERVICE/Dockerfile"
+            exit 1
+          fi
+
+      - name: Calculate next version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SERVICE="${{ inputs.service }}"
+          BUMP="${{ inputs.bump }}"
+          TAG_PREFIX="${SERVICE}-v"
+
+          echo "Looking for tags matching ${TAG_PREFIX}*"
+
+          LATEST_TAG="$(
+            git tag \
+              --list "${TAG_PREFIX}[0-9]*.[0-9]*.[0-9]*" \
+              --sort=-version:refname \
+            | head -n 1
+          )"
+
+          if [ -z "$LATEST_TAG" ]; then
+            CURRENT_VERSION="0.0.0"
+          else
+            CURRENT_VERSION="${LATEST_TAG#${TAG_PREFIX}}"
+          fi
+
+          if ! [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid current version: $CURRENT_VERSION"
+            exit 1
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+          case "$BUMP" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+            *)
+              echo "Unsupported bump type: $BUMP"
+              exit 1
+              ;;
+          esac
+
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          TAG="${TAG_PREFIX}${VERSION}"
+
+          echo "Current version: $CURRENT_VERSION"
+          echo "Next version:    $VERSION"
+          echo "Git tag:         $TAG"
+
+          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release tag does not exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.version.outputs.tag }}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Release tag already exists: $TAG"
+            exit 1
+          fi
+
+      - name: Determine image name
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          REPOSITORY="$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')"
+          SERVICE="${{ inputs.service }}"
+
+          IMAGE="ghcr.io/${OWNER}/${REPOSITORY}/${SERVICE}"
+
+          echo "Docker image: $IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io \
+                --username "${{ github.actor }}" \
+                --password-stdin
+
+      - name: Build Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SERVICE="${{ inputs.service }}"
+          IMAGE="${{ steps.image.outputs.image }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          MAJOR="${{ steps.version.outputs.major }}"
+          MINOR="${{ steps.version.outputs.minor }}"
+
+          echo "Building:"
+          echo "  ${IMAGE}:${VERSION}"
+          echo "  ${IMAGE}:${MAJOR}.${MINOR}"
+          echo "  ${IMAGE}:${MAJOR}"
+          echo "  ${IMAGE}:latest"
+
+          docker build \
+            --build-arg VERSION="${VERSION}" \
+            --label "org.opencontainers.image.title=${SERVICE}" \
+            --label "org.opencontainers.image.description=${SERVICE} service" \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --tag "${IMAGE}:${VERSION}" \
+            --tag "${IMAGE}:${MAJOR}.${MINOR}" \
+            --tag "${IMAGE}:${MAJOR}" \
+            --tag "${IMAGE}:latest" \
+            "apps/${SERVICE}"
+
+      - name: Push Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE="${{ steps.image.outputs.image }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          MAJOR="${{ steps.version.outputs.major }}"
+          MINOR="${{ steps.version.outputs.minor }}"
+
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:${MAJOR}.${MINOR}"
+          docker push "${IMAGE}:${MAJOR}"
+          docker push "${IMAGE}:latest"
+
+      - name: Create Git release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SERVICE="${{ inputs.service }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag \
+            --annotate "$TAG" \
+            --message "Release ${SERVICE} ${VERSION}"
+
+          git push origin "$TAG"
+
+      - name: Write job summary
+        shell: bash
+        run: |
+          {
+            echo "## Release complete"
+            echo
+            echo "| Property | Value |"
+            echo "| --- | --- |"
+            echo "| Service | \`${{ inputs.service }}\` |"
+            echo "| Previous version | \`${{ steps.version.outputs.current_version }}\` |"
+            echo "| New version | \`${{ steps.version.outputs.version }}\` |"
+            echo "| Git tag | \`${{ steps.version.outputs.tag }}\` |"
+            echo "| Docker image | \`${{ steps.image.outputs.image }}\` |"
+            echo
+            echo "Published tags:"
+            echo
+            echo "- \`${{ steps.image.outputs.image }}:${{ steps.version.outputs.version }}\`"
+            echo "- \`${{ steps.image.outputs.image }}:${{ steps.version.outputs.major }}.${{ steps.version.outputs.minor }}\`"
+            echo "- \`${{ steps.image.outputs.image }}:${{ steps.version.outputs.major }}\`"
+            echo "- \`${{ steps.image.outputs.image }}:latest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
