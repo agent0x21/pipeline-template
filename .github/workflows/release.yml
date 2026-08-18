@@ -1,41 +1,111 @@
-name: Release service
+name: Build and promote services
 
-run-name: Release ${{ inputs.service }} (${{ inputs.bump }})
+run-name: ${{ github.ref_name }} - ${{ github.sha }}
 
 on:
-  workflow_dispatch:
-    inputs:
-      service:
-        description: Service to release
-        required: true
-        type: choice
-        options:
-          - react
-          - next
-          - express
-          - dotnet-api
-
-      bump:
-        description: Semantic version bump
-        required: true
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
+  push:
+    branches:
+      - dev
+      - qa
+      - main
+    paths:
+      - "apps/**"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: write
   packages: write
 
-concurrency:
-  group: release-${{ inputs.service }}
-  cancel-in-progress: false
-
 jobs:
-  release:
-    name: Release ${{ inputs.service }}
+  detect:
+    name: Detect changed services
     runs-on: self-hosted
+
+    outputs:
+      services: ${{ steps.changed.outputs.services }}
+      has_changes: ${{ steps.changed.outputs.has_changes }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed services
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            BEFORE="${AFTER}^"
+          fi
+
+          CHANGED_FILES="$(
+            git diff --name-only "$BEFORE" "$AFTER"
+          )"
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          CHANGED_SERVICES="$(
+            echo "$CHANGED_FILES" \
+              | awk -F/ '
+                  $1 == "apps" &&
+                  (
+                    $2 == "react" ||
+                    $2 == "next" ||
+                    $2 == "express" ||
+                    $2 == "dotnet-api"
+                  ) {
+                    print $2
+                  }
+                ' \
+              | sort -u
+          )"
+
+          if [ -z "$CHANGED_SERVICES" ]; then
+            echo 'services=[]' >> "$GITHUB_OUTPUT"
+            echo 'has_changes=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          JSON="$(
+            echo "$CHANGED_SERVICES" \
+              | jq -R . \
+              | jq -s -c .
+          )"
+
+          echo "Changed services: $JSON"
+
+          echo "services=$JSON" >> "$GITHUB_OUTPUT"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+  dev-build:
+    name: Build ${{ matrix.service }} for DEV
+
+    needs:
+      - detect
+
+    if: |
+      github.ref_name == 'dev' &&
+      needs.detect.outputs.has_changes == 'true'
+
+    runs-on: self-hosted
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.detect.outputs.services) }}
+
+    concurrency:
+      group: build-${{ matrix.service }}-dev
+      cancel-in-progress: false
+
+    environment: DEV
 
     steps:
       - name: Checkout repository
@@ -48,24 +118,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          SERVICE="${{ inputs.service }}"
+          SERVICE="${{ matrix.service }}"
 
-          case "$SERVICE" in
-            react|next|express|dotnet-api)
-              ;;
-            *)
-              echo "Unsupported service: $SERVICE"
-              exit 1
-              ;;
-          esac
-
-          if [ ! -d "apps/$SERVICE" ]; then
-            echo "Service directory does not exist: apps/$SERVICE"
-            exit 1
-          fi
-
-          if [ ! -f "apps/$SERVICE/Dockerfile" ]; then
-            echo "Dockerfile does not exist: apps/$SERVICE/Dockerfile"
+          if [ ! -f "apps/${SERVICE}/Dockerfile" ]; then
+            echo "Dockerfile not found for ${SERVICE}"
             exit 1
           fi
 
@@ -75,11 +131,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          SERVICE="${{ inputs.service }}"
-          BUMP="${{ inputs.bump }}"
+          SERVICE="${{ matrix.service }}"
           TAG_PREFIX="${SERVICE}-v"
-
-          echo "Looking for tags matching ${TAG_PREFIX}*"
 
           LATEST_TAG="$(
             git tag \
@@ -95,106 +148,64 @@ jobs:
           fi
 
           if ! [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid current version: $CURRENT_VERSION"
+            echo "Invalid version: $CURRENT_VERSION"
             exit 1
           fi
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 
-          case "$BUMP" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
-            *)
-              echo "Unsupported bump type: $BUMP"
-              exit 1
-              ;;
-          esac
+          PATCH=$((PATCH + 1))
 
           VERSION="${MAJOR}.${MINOR}.${PATCH}"
           TAG="${TAG_PREFIX}${VERSION}"
 
           echo "Current version: $CURRENT_VERSION"
-          echo "Next version:    $VERSION"
-          echo "Git tag:         $TAG"
+          echo "New version:     $VERSION"
+          echo "Tag:             $TAG"
 
-          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Verify release tag does not exist
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TAG="${{ steps.version.outputs.tag }}"
-
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Release tag already exists: $TAG"
-            exit 1
-          fi
 
       - name: Determine image name
         id: image
         shell: bash
         run: |
-          set -euo pipefail
-
           OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           REPOSITORY="$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')"
-          SERVICE="${{ inputs.service }}"
 
-          IMAGE="ghcr.io/${OWNER}/${REPOSITORY}/${SERVICE}"
+          IMAGE="ghcr.io/${OWNER}/${REPOSITORY}/${{ matrix.service }}"
 
-          echo "Docker image: $IMAGE"
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         shell: bash
         run: |
-          set -euo pipefail
-
           echo "${{ secrets.GITHUB_TOKEN }}" \
             | docker login ghcr.io \
                 --username "${{ github.actor }}" \
                 --password-stdin
 
-      - name: Build Docker image
+      - name: Build image
         shell: bash
         run: |
           set -euo pipefail
 
-          SERVICE="${{ inputs.service }}"
           IMAGE="${{ steps.image.outputs.image }}"
           VERSION="${{ steps.version.outputs.version }}"
-
-          echo "Building:"
-          echo "  ${IMAGE}:${VERSION}"
-          echo "  ${IMAGE}:latest"
+          SERVICE="${{ matrix.service }}"
 
           docker build \
-            --no-cache \
             --file "apps/${SERVICE}/Dockerfile" \
             --build-arg VERSION="${VERSION}" \
             --label "org.opencontainers.image.title=${SERVICE}" \
-            --label "org.opencontainers.image.description=${SERVICE} service" \
             --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             --label "org.opencontainers.image.version=${VERSION}" \
             --tag "${IMAGE}:${VERSION}" \
-            --tag "${IMAGE}" \
+            --tag "${IMAGE}:dev" \
             .
 
-      - name: Push Docker image
+      - name: Push DEV image
         shell: bash
         run: |
           set -euo pipefail
@@ -203,48 +214,239 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
 
           docker push "${IMAGE}:${VERSION}"
-          docker push "${IMAGE}:latest"
+          docker push "${IMAGE}:dev"
 
-      - name: Create Git release tag
+      - name: Create release tag
         shell: bash
         run: |
           set -euo pipefail
 
-          SERVICE="${{ inputs.service }}"
-          VERSION="${{ steps.version.outputs.version }}"
           TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git tag \
             --annotate "$TAG" \
-            --message "Release ${SERVICE} ${VERSION}"
+            --message "Build ${{ matrix.service }} ${VERSION}"
 
           git push origin "$TAG"
 
-      - name: Write job summary
-        shell: bash
-        run: |
-          {
-            echo "## Release complete"
-            echo
-            echo "| Property | Value |"
-            echo "| --- | --- |"
-            echo "| Service | \`${{ inputs.service }}\` |"
-            echo "| Previous version | \`${{ steps.version.outputs.current_version }}\` |"
-            echo "| New version | \`${{ steps.version.outputs.version }}\` |"
-            echo "| Git tag | \`${{ steps.version.outputs.tag }}\` |"
-            echo "| Docker image | \`${{ steps.image.outputs.image }}\` |"
-            echo
-            echo "Published tags:"
-            echo
-            echo "- \`${{ steps.image.outputs.image }}:${{ steps.version.outputs.version }}\`"
-            echo "- \`${{ steps.image.outputs.image }}:latest\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Log out of GitHub Container Registry
+      - name: Log out
         if: always()
+        run: docker logout ghcr.io || true
+
+  promote-qa:
+    name: Promote ${{ matrix.service }} to QA
+
+    needs:
+      - detect
+
+    if: |
+      github.ref_name == 'qa' &&
+      needs.detect.outputs.has_changes == 'true'
+
+    runs-on: self-hosted
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.detect.outputs.services) }}
+
+    concurrency:
+      group: promote-${{ matrix.service }}-qa
+      cancel-in-progress: false
+
+    environment: QA
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Determine image
+        id: image
         shell: bash
         run: |
-          docker logout ghcr.io || true
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          REPOSITORY="$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')"
+
+          IMAGE="ghcr.io/${OWNER}/${REPOSITORY}/${{ matrix.service }}"
+
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Determine promoted version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SERVICE="${{ matrix.service }}"
+
+          TAG="$(
+            git tag \
+              --merged HEAD \
+              --list "${SERVICE}-v[0-9]*.[0-9]*.[0-9]*" \
+              --sort=-version:refname \
+            | head -n 1
+          )"
+
+          if [ -z "$TAG" ]; then
+            echo "No release version found for ${SERVICE}"
+            exit 1
+          fi
+
+          VERSION="${TAG#${SERVICE}-v}"
+
+          echo "Promoting version: $VERSION"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io \
+                --username "${{ github.actor }}" \
+                --password-stdin
+
+      - name: Promote image to QA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE="${{ steps.image.outputs.image }}"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          echo "Pulling immutable version:"
+          echo "  ${IMAGE}:${VERSION}"
+
+          docker pull "${IMAGE}:${VERSION}"
+
+          SOURCE_DIGEST="$(
+            docker inspect \
+              --format='{{index .RepoDigests 0}}' \
+              "${IMAGE}:${VERSION}"
+          )"
+
+          echo "Source digest:"
+          echo "  $SOURCE_DIGEST"
+
+          docker tag \
+            "${IMAGE}:${VERSION}" \
+            "${IMAGE}:qa"
+
+          docker push "${IMAGE}:qa"
+
+      - name: Log out
+        if: always()
+        run: docker logout ghcr.io || true
+
+  promote-prod:
+    name: Promote ${{ matrix.service }} to PROD
+
+    needs:
+      - detect
+
+    if: |
+      github.ref_name == 'main' &&
+      needs.detect.outputs.has_changes == 'true'
+
+    runs-on: self-hosted
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.detect.outputs.services) }}
+
+    concurrency:
+      group: promote-${{ matrix.service }}-prod
+      cancel-in-progress: false
+
+    environment: PROD
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Determine image
+        id: image
+        shell: bash
+        run: |
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          REPOSITORY="$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')"
+
+          IMAGE="ghcr.io/${OWNER}/${REPOSITORY}/${{ matrix.service }}"
+
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Determine promoted version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SERVICE="${{ matrix.service }}"
+
+          TAG="$(
+            git tag \
+              --merged HEAD \
+              --list "${SERVICE}-v[0-9]*.[0-9]*.[0-9]*" \
+              --sort=-version:refname \
+            | head -n 1
+          )"
+
+          if [ -z "$TAG" ]; then
+            echo "No release version found for ${SERVICE}"
+            exit 1
+          fi
+
+          VERSION="${TAG#${SERVICE}-v}"
+
+          echo "Promoting version: $VERSION"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io \
+                --username "${{ github.actor }}" \
+                --password-stdin
+
+      - name: Promote image to PROD
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE="${{ steps.image.outputs.image }}"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          docker pull "${IMAGE}:${VERSION}"
+
+          SOURCE_DIGEST="$(
+            docker inspect \
+              --format='{{index .RepoDigests 0}}' \
+              "${IMAGE}:${VERSION}"
+          )"
+
+          echo "Promoting digest:"
+          echo "  $SOURCE_DIGEST"
+
+          docker tag \
+            "${IMAGE}:${VERSION}" \
+            "${IMAGE}:prod"
+
+          docker tag \
+            "${IMAGE}:${VERSION}" \
+            "${IMAGE}:latest"
+
+          docker push "${IMAGE}:prod"
+          docker push "${IMAGE}:latest"
+
+      - name: Log out
+        if: always()
+        run: docker logout ghcr.io || true
