@@ -1,6 +1,7 @@
 ## .NET build artifacts
 bin/
-obj/
+obj/Debug/
+
 out/
 
 ## Visual Studio / Rider / VS Code
