@@ -1,0 +1,21 @@
+{
+  "name": "Pipeline-Template",
+  "version": "0.1.0",
+  "description": "Template for creating a new pipelines for monorepos",
+  "main": "index.js",
+  "scripts": {
+    "dev:react": "pnpm --filter @templates/react dev",
+    "dev:next": "pnpm --filter @templates/next dev",
+    "dev:express": "pnpm --filter @templates/express dev",
+    "dev:dotnet": "dotnet watch --project apps/dotnet-api",
+    "build:react": "pnpm --filter @templates/react build",
+    "build:next": "pnpm --filter @templates/next build",
+    "build:express": "pnpm --filter @templates/express build",
+    "build:dotnet": "dotnet build apps/dotnet-api",
+    "build": "pnpm -r build && dotnet build apps/dotnet-api"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.33.0"
+}
