@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/apps/" />
+  <Folder Name="/apps/dotnet-api/">
+    <Project Path="apps/dotnet-api/DotnetApi.csproj" />
+  </Folder>
+</Solution>
