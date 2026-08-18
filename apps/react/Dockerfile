@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM dhi.io/node:24-alpine AS build
+FROM dhi.io/node:24-alpine-dev AS build
 
 ARG VERSION=0.0.0
 

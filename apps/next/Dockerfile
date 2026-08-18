@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM dhi.io/node:24-alpine AS base
+FROM dhi.io/node:24-alpine-dev AS base
 
 RUN corepack enable
 
