@@ -1,0 +1,624 @@
+name: Build and version
+
+on:
+  push:
+    branches:
+      - dev
+      - qa
+      - main
+
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Environment/branch to build"
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+
+      service:
+        description: "Service directory to build, or 'all'"
+        required: true
+        default: all
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ============================================================
+  # Detect Dockerfile-backed components.
+  #
+  # Push:
+  #   Build only Dockerfile-backed components affected by the
+  #   commits in the push.
+  #
+  # workflow_dispatch:
+  #   Build either:
+  #     - all Dockerfile-backed components
+  #     - one explicitly requested component
+  #
+  #   The selected target (dev/qa) determines the actual source
+  #   branch and commit that will be built.
+  # ============================================================
+  detect:
+    name: Detect changed components
+    runs-on: self-hosted
+
+    outputs:
+      components: ${{ steps.detect.outputs.components }}
+      has_components: ${{ steps.detect.outputs.has_components }}
+      source_sha: ${{ steps.checkout.outputs.source_sha }}
+      branch: ${{ steps.checkout.outputs.branch }}
+
+    steps:
+      - name: Checkout repository
+        id: checkout
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+
+          git init .
+          git config --local gc.auto 0
+
+          if git remote get-url origin >/dev/null 2>&1; then
+            git remote set-url origin \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          else
+            git remote add origin \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          fi
+
+          git fetch --force --prune --tags origin \
+            "+refs/heads/*:refs/remotes/origin/*"
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ -z "${TARGET}" ]]; then
+              echo "ERROR: Manual workflow requires a target branch."
+              exit 1
+            fi
+
+            source_ref="refs/remotes/origin/${TARGET}"
+
+            if ! git rev-parse --verify "${source_ref}^{commit}" >/dev/null 2>&1; then
+              echo "ERROR: Target branch '${TARGET}' was not found."
+              exit 1
+            fi
+
+            source_sha="$(git rev-parse "${source_ref}^{commit}")"
+            branch="${TARGET}"
+          else
+            source_sha="${GITHUB_SHA}"
+            branch="${GITHUB_REF_NAME}"
+          fi
+
+          echo "--------------------------------------"
+          echo "Event:      ${EVENT_NAME}"
+          echo "Branch:     ${branch}"
+          echo "Source SHA: ${source_sha}"
+          echo "--------------------------------------"
+
+          git checkout --force "${source_sha}"
+          git clean -ffdx
+
+          echo "source_sha=${source_sha}" >> "${GITHUB_OUTPUT}"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+
+      - name: Detect changed components
+        id: detect
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ steps.checkout.outputs.source_sha }}
+          REQUESTED_SERVICE: ${{ inputs.service }}
+        run: |
+          set -euo pipefail
+
+          declare -a files=()
+          declare -A component_map=()
+
+          find_component_for_file() {
+            local file="$1"
+            local directory
+
+            if [[ -d "${file}" ]]; then
+              directory="${file}"
+            else
+              directory="$(dirname "${file}")"
+            fi
+
+            while true; do
+              if [[ -f "${directory}/Dockerfile" ]]; then
+                echo "${directory}"
+                return 0
+              fi
+
+              if [[ "${directory}" == "." || "${directory}" == "/" ]]; then
+                break
+              fi
+
+              directory="$(dirname "${directory}")"
+            done
+
+            if [[ -f "Dockerfile" ]]; then
+              echo "."
+              return 0
+            fi
+
+            return 1
+          }
+
+          list_components() {
+            git ls-files |
+              awk '
+                $0 == "Dockerfile" {
+                  print "."
+                  next
+                }
+
+                $0 ~ /\/Dockerfile$/ {
+                  sub(/\/Dockerfile$/, "")
+                  print
+                }
+              ' |
+              sort -u
+          }
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            requested_service="${REQUESTED_SERVICE:-all}"
+
+            # Remove a trailing slash so "apps/web/" and "apps/web"
+            # are treated the same.
+            if [[ "${requested_service}" != "/" ]]; then
+              requested_service="${requested_service%/}"
+            fi
+
+            echo "Manual build requested."
+            echo "Requested service: ${requested_service}"
+
+            if [[ "${requested_service}" == "all" ]]; then
+              while IFS= read -r component; do
+                [[ -z "${component}" ]] && continue
+                component_map["${component}"]=1
+              done < <(
+                list_components
+              )
+
+            else
+              matched=false
+
+              while IFS= read -r component; do
+                [[ -z "${component}" ]] && continue
+
+                if [[ "${component}" == "${requested_service}" ]]; then
+                  component_map["${component}"]=1
+                  matched=true
+                  break
+                fi
+              done < <(
+                list_components
+              )
+
+              if [[ "${matched}" != "true" ]]; then
+                echo
+                echo "ERROR: '${requested_service}' is not a valid Dockerfile-backed component."
+                echo
+                echo "Available services:"
+                echo "-------------------"
+
+                while IFS= read -r component; do
+                  [[ -z "${component}" ]] && continue
+                  echo "  ${component}"
+                done < <(
+                  list_components
+                )
+
+                echo
+                echo "You may also use:"
+                echo "  all"
+                exit 1
+              fi
+            fi
+
+          elif [[ -z "${BEFORE_SHA}" || "${BEFORE_SHA}" =~ ^0+$ ]]; then
+            mapfile -t files < <(
+              git diff-tree \
+                --root \
+                --no-commit-id \
+                --name-only \
+                -r \
+                "${CURRENT_SHA}"
+            )
+
+          else
+            # The authenticated origin is intentionally retained from
+            # the checkout step so this works on private repositories.
+            git fetch --force origin "${BEFORE_SHA}"
+
+            mapfile -t files < <(
+              git diff \
+                --name-only \
+                "${BEFORE_SHA}" \
+                "${CURRENT_SHA}"
+            )
+          fi
+
+          if [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+            for file in "${files[@]}"; do
+              [[ -z "${file}" ]] && continue
+
+              component="$(
+                find_component_for_file "${file}" || true
+              )"
+
+              if [[ -n "${component}" ]]; then
+                echo "Matched '${file}' -> '${component}/Dockerfile'"
+                component_map["${component}"]=1
+              fi
+            done
+          fi
+
+          if [[ ${#component_map[@]} -eq 0 ]]; then
+            echo "No Dockerfile-backed components need to be built."
+            echo 'components=[]' >> "${GITHUB_OUTPUT}"
+            echo 'has_components=false' >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          # Build a JSON array without requiring Python, jq, etc.
+          components_json="$(
+            printf '%s\n' "${!component_map[@]}" |
+              sort |
+              awk '
+                BEGIN {
+                  printf "["
+                }
+
+                {
+                  gsub(/\\/,"\\\\")
+                  gsub(/"/,"\\\"")
+
+                  if (NR > 1) {
+                    printf ","
+                  }
+
+                  printf "\"%s\"", $0
+                }
+
+                END {
+                  print "]"
+                }
+              '
+          )"
+
+          echo "Components: ${components_json}"
+
+          echo "components=${components_json}" >> "${GITHUB_OUTPUT}"
+          echo 'has_components=true' >> "${GITHUB_OUTPUT}"
+
+  # ============================================================
+  # Build, version, push, and Git-tag each selected component.
+  #
+  # Version policy:
+  #
+  #   dev
+  #     next minor beta
+  #     Example: 1.3.0-beta.<run_number>
+  #
+  #   qa
+  #     next minor RC
+  #     Example: 1.3.0-rc.<run_number>
+  #
+  #   main
+  #     next minor stable
+  #     Example: 1.3.0
+  #
+  # Stable Git tags are the source of truth:
+  #
+  #   apps-web/v1.2.0
+  #   apps-api/v2.4.0
+  #
+  # Prerelease tags do not advance the stable baseline.
+  # ============================================================
+  build:
+    name: Build ${{ matrix.component }}
+    needs: detect
+    if: needs.detect.outputs.has_components == 'true'
+    runs-on: self-hosted
+
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.detect.outputs.components) }}
+
+    # Prevent two runs from calculating/publishing a version for
+    # the same component at the same time.
+    concurrency:
+      group: build-version-${{ matrix.component }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository and tags
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+
+          git init .
+          git config --local gc.auto 0
+
+          if git remote get-url origin >/dev/null 2>&1; then
+            git remote set-url origin \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          else
+            git remote add origin \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          fi
+
+          git fetch --force --prune --tags origin \
+            "+refs/heads/*:refs/remotes/origin/*"
+
+          if ! git cat-file -e "${SOURCE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --force origin "${SOURCE_SHA}"
+          fi
+
+          git checkout --force "${SOURCE_SHA}"
+          git clean -ffdx
+
+          echo "Checked out source commit: ${SOURCE_SHA}"
+
+      - name: Resolve component identity
+        id: component
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${COMPONENT}" == "." ]]; then
+            dockerfile="./Dockerfile"
+            component_id="root"
+          else
+            dockerfile="${COMPONENT}/Dockerfile"
+
+            component_id="$(
+              echo "${COMPONENT}" |
+                tr '[:upper:]' '[:lower:]' |
+                sed \
+                  -e 's#[/\\]#-#g' \
+                  -e 's#[^a-z0-9._-]#-#g'
+            )"
+          fi
+
+          if [[ ! -f "${dockerfile}" ]]; then
+            echo "ERROR: Dockerfile not found: ${dockerfile}"
+            exit 1
+          fi
+
+          repository="$(
+            echo "${GITHUB_REPOSITORY}" |
+              tr '[:upper:]' '[:lower:]'
+          )"
+
+          image="${REGISTRY}/${repository}/${component_id}"
+
+          echo "--------------------------------------"
+          echo "Component:  ${COMPONENT}"
+          echo "ID:         ${component_id}"
+          echo "Dockerfile: ${dockerfile}"
+          echo "Image:      ${image}"
+          echo "--------------------------------------"
+
+          echo "id=${component_id}" >> "${GITHUB_OUTPUT}"
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
+          echo "dockerfile=${dockerfile}" >> "${GITHUB_OUTPUT}"
+
+      - name: Calculate component version
+        id: version
+        shell: bash
+        env:
+          COMPONENT_ID: ${{ steps.component.outputs.id }}
+          BRANCH: ${{ needs.detect.outputs.branch }}
+          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+
+          # Re-fetch tags inside the serialized section so the version
+          # calculation sees tags created by an earlier queued run.
+          git fetch --force --tags origin
+
+          stable_versions="$({
+            git tag -l "${COMPONENT_ID}/v*" |
+              sed -n "s#^${COMPONENT_ID}/v##p" |
+              grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true
+          })"
+
+          if [[ -z "${stable_versions}" ]]; then
+            current="0.0.0"
+          else
+            current="$(
+              printf '%s\n' "${stable_versions}" |
+                sort -V |
+                tail -n 1
+            )"
+          fi
+
+          IFS='.' read -r major minor patch <<< "${current}"
+
+          # This workflow models each dev -> qa -> main promotion
+          # cycle as the next minor release.
+          next_major="${major}"
+          next_minor=$((minor + 1))
+          next_patch=0
+
+          base_version="${next_major}.${next_minor}.${next_patch}"
+
+          case "${BRANCH}" in
+            dev)
+              version="${base_version}-beta.${RUN_NUMBER}"
+              ;;
+
+            qa)
+              version="${base_version}-rc.${RUN_NUMBER}"
+              ;;
+
+            main)
+              version="${base_version}"
+              ;;
+
+            *)
+              echo "ERROR: Versioning is only defined for dev, qa, and main."
+              echo "Current branch: ${BRANCH}"
+              exit 1
+              ;;
+          esac
+
+          git_tag="${COMPONENT_ID}/v${version}"
+
+          echo "--------------------------------------"
+          echo "Component:       ${COMPONENT_ID}"
+          echo "Branch:          ${BRANCH}"
+          echo "Commit:          ${SOURCE_SHA}"
+          echo "Stable baseline: ${current}"
+          echo "Version:         ${version}"
+          echo "Git tag:         ${git_tag}"
+          echo "--------------------------------------"
+
+          # Idempotent re-runs are allowed only when an existing tag
+          # already points at this exact source commit.
+          if git rev-parse -q \
+            --verify \
+            "refs/tags/${git_tag}" \
+            >/dev/null
+          then
+            tagged_sha="$(
+              git rev-list -n 1 "${git_tag}"
+            )"
+
+            if [[ "${tagged_sha}" != "${SOURCE_SHA}" ]]; then
+              echo "ERROR: ${git_tag} already exists on ${tagged_sha}."
+              echo "Expected source commit: ${SOURCE_SHA}"
+              exit 1
+            fi
+
+            echo "tag_exists=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "tag_exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+          echo "current=${current}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "git_tag=${git_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Login to GHCR
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "${GITHUB_TOKEN}" |
+            docker login "${REGISTRY}" \
+              --username "${GITHUB_ACTOR}" \
+              --password-stdin
+
+      - name: Build versioned image
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+          IMAGE: ${{ steps.component.outputs.image }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+          BUILD_BRANCH: ${{ needs.detect.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          echo "--------------------------------------"
+          echo "Component: ${COMPONENT}"
+          echo "Branch:    ${BUILD_BRANCH}"
+          echo "Commit:    ${SOURCE_SHA}"
+          echo "Image:     ${IMAGE}:${VERSION}"
+          echo "SHA tag:   ${IMAGE}:sha-${SOURCE_SHA}"
+          echo "--------------------------------------"
+
+          docker build \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --tag "${IMAGE}:${VERSION}" \
+            --tag "${IMAGE}:sha-${SOURCE_SHA}" \
+            "${COMPONENT}"
+
+      - name: Push image tags
+        shell: bash
+        env:
+          IMAGE: ${{ steps.component.outputs.image }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:sha-${SOURCE_SHA}"
+
+      - name: Create component Git tag
+        if: steps.version.outputs.tag_exists != 'true'
+        shell: bash
+        env:
+          GIT_TAG: ${{ steps.version.outputs.git_tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          COMPONENT_ID: ${{ steps.component.outputs.id }}
+          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "${GIT_TAG}" "${SOURCE_SHA}" \
+            -m "${COMPONENT_ID} ${VERSION}"
+
+          git push origin "refs/tags/${GIT_TAG}"
+
+      - name: Build summary
+        shell: bash
+        env:
+          COMPONENT: ${{ matrix.component }}
+          COMPONENT_ID: ${{ steps.component.outputs.id }}
+          IMAGE: ${{ steps.component.outputs.image }}
+          VERSION: ${{ steps.version.outputs.version }}
+          GIT_TAG: ${{ steps.version.outputs.git_tag }}
+          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+          BUILD_BRANCH: ${{ needs.detect.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "## Component built and versioned"
+            echo
+            echo "| Property | Value |"
+            echo "|---|---|"
+            echo "| Source component | \`${COMPONENT}\` |"
+            echo "| Component ID | \`${COMPONENT_ID}\` |"
+            echo "| Branch | \`${BUILD_BRANCH}\` |"
+            echo "| Commit | \`${SOURCE_SHA}\` |"
+            echo "| Version | \`${VERSION}\` |"
+            echo "| Git tag | \`${GIT_TAG}\` |"
+            echo "| Versioned image | \`${IMAGE}:${VERSION}\` |"
+            echo "| Immutable image | \`${IMAGE}:sha-${SOURCE_SHA}\` |"
+          } >> "${GITHUB_STEP_SUMMARY}"
