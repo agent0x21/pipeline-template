@@ -23,7 +23,7 @@ COPY apps/react ./apps/react
 RUN pnpm --filter @templates/react build
 
 
-FROM nginx:1.31.4-trixie-perl AS runtime
+FROM nginx AS runtime
 
 ARG VERSION=0.0.0
 
