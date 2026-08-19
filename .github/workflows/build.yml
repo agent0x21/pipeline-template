@@ -32,21 +32,23 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+
   # ============================================================
   # Detect Dockerfile-backed components.
   #
   # Push:
-  #   Build only Dockerfile-backed components affected by the
-  #   commits in the push.
+  # Build only Dockerfile-backed components affected by the
+  # commits in the push.
   #
   # workflow_dispatch:
-  #   Build either:
-  #     - all Dockerfile-backed components
-  #     - one explicitly requested component
+  # Build either:
+  # - all Dockerfile-backed components
+  # - one explicitly requested component
   #
-  #   The selected target (dev/qa) determines the actual source
-  #   branch and commit that will be built.
+  # The selected target (dev/qa) determines the actual source
+  # branch and commit that will be built.
   # ============================================================
+
   detect:
     name: Detect changed components
     runs-on: self-hosted
@@ -312,25 +314,26 @@ jobs:
   #
   # Version policy:
   #
-  #   dev
-  #     next minor beta
-  #     Example: 1.3.0-beta.<run_number>
+  # dev
+  # next minor beta
+  # Example: 1.3.0-beta.<run_number>
   #
-  #   qa
-  #     next minor RC
-  #     Example: 1.3.0-rc.<run_number>
+  # qa
+  # next minor RC
+  # Example: 1.3.0-rc.<run_number>
   #
-  #   main
-  #     next minor stable
-  #     Example: 1.3.0
+  # main
+  # next minor stable
+  # Example: 1.3.0
   #
   # Stable Git tags are the source of truth:
   #
-  #   apps-web/v1.2.0
-  #   apps-api/v2.4.0
+  # apps-web/v1.2.0
+  # apps-api/v2.4.0
   #
   # Prerelease tags do not advance the stable baseline.
   # ============================================================
+
   build:
     name: Build ${{ matrix.component }}
     needs: detect
@@ -441,11 +444,11 @@ jobs:
           # calculation sees tags created by an earlier queued run.
           git fetch --force --tags origin
 
-          stable_versions="$({
+          stable_versions="$( {
             git tag -l "${COMPONENT_ID}/v*" |
               sed -n "s#^${COMPONENT_ID}/v##p" |
               grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true
-          })"
+          } )"
 
           if [[ -z "${stable_versions}" ]]; then
             current="0.0.0"
@@ -540,6 +543,7 @@ jobs:
         shell: bash
         env:
           COMPONENT: ${{ matrix.component }}
+          DOCKERFILE: ${{ steps.component.outputs.dockerfile }}
           IMAGE: ${{ steps.component.outputs.image }}
           VERSION: ${{ steps.version.outputs.version }}
           SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
@@ -548,20 +552,24 @@ jobs:
           set -euo pipefail
 
           echo "--------------------------------------"
-          echo "Component: ${COMPONENT}"
-          echo "Branch:    ${BUILD_BRANCH}"
-          echo "Commit:    ${SOURCE_SHA}"
-          echo "Image:     ${IMAGE}:${VERSION}"
-          echo "SHA tag:   ${IMAGE}:sha-${SOURCE_SHA}"
+          echo "Component:  ${COMPONENT}"
+          echo "Dockerfile: ${DOCKERFILE}"
+          echo "Context:    ."
+          echo "Branch:     ${BUILD_BRANCH}"
+          echo "Commit:     ${SOURCE_SHA}"
+          echo "Image:      ${IMAGE}:${VERSION}"
+          echo "SHA tag:    ${IMAGE}:sha-${SOURCE_SHA}"
           echo "--------------------------------------"
 
           docker build \
+            --file "${DOCKERFILE}" \
+            --build-arg "VERSION=${VERSION}" \
             --label "org.opencontainers.image.version=${VERSION}" \
             --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --tag "${IMAGE}:${VERSION}" \
             --tag "${IMAGE}:sha-${SOURCE_SHA}" \
-            "${COMPONENT}"
+            .
 
       - name: Push image tags
         shell: bash
