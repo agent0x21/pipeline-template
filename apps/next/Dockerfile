@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM dhi.io/node:24-alpine-dev AS base
+FROM node:24-alpine AS base
 
 RUN corepack enable
 
@@ -29,7 +29,7 @@ COPY apps/next ./apps/next
 RUN pnpm --filter @templates/next build
 
 
-FROM dhi.io/node:24-alpine AS runtime
+FROM node:24-alpine AS runtime
 
 ARG VERSION=0.0.0
 

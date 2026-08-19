@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM dhi.io/node:24-alpine-dev AS base
+FROM node:24-alpine AS base
 
 RUN corepack enable
 
@@ -25,7 +25,7 @@ RUN pnpm \
     deploy /deploy/express
 
 
-FROM dhi.io/node:24-alpine-dev AS runtime
+FROM node:24-alpine AS runtime
 
 ARG VERSION=0.0.0
 
