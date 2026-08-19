@@ -1,0 +1,451 @@
+name: Cleanup old component artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Component directory/id to clean, or 'all'"
+        required: true
+        default: all
+        type: string
+
+      keep_stable:
+        description: "Stable versions to keep per component (minimum 2: current + rollback)"
+        required: true
+        default: "10"
+        type: string
+
+      keep_rc:
+        description: "RC versions to keep per component"
+        required: true
+        default: "10"
+        type: string
+
+      keep_beta:
+        description: "Beta versions to keep per component"
+        required: true
+        default: "10"
+        type: string
+
+      dry_run:
+        description: "Show what would be deleted without deleting anything"
+        required: true
+        default: true
+        type: boolean
+
+  schedule:
+    # Sundays at 03:17 UTC. Scheduled cleanup is disabled unless the
+    # repository variable ENABLE_SCHEDULED_CLEANUP is set to "true".
+    - cron: "17 3 * * 0"
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: component-artifact-cleanup
+  cancel-in-progress: false
+
+env:
+  # Manual runs use workflow inputs. Scheduled runs use repository
+  # variables when present, otherwise these conservative defaults.
+  REQUESTED_SERVICE: ${{ github.event_name == 'workflow_dispatch' && inputs.service || 'all' }}
+  KEEP_STABLE: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_stable || vars.CLEANUP_KEEP_STABLE || '10' }}
+  KEEP_RC: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_rc || vars.CLEANUP_KEEP_RC || '10' }}
+  KEEP_BETA: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_beta || vars.CLEANUP_KEEP_BETA || '10' }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+
+jobs:
+  cleanup:
+    name: Clean old tags and GHCR images
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULED_CLEANUP == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          validate_non_negative_integer() {
+            local name="$1"
+            local value="$2"
+
+            if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: ${name} must be a non-negative integer. Got: '${value}'"
+              exit 1
+            fi
+          }
+
+          validate_non_negative_integer "KEEP_STABLE" "${KEEP_STABLE}"
+          validate_non_negative_integer "KEEP_RC" "${KEEP_RC}"
+          validate_non_negative_integer "KEEP_BETA" "${KEEP_BETA}"
+
+          # Stable rollback invariant:
+          #   1. newest stable = current production/version baseline
+          #   2. second-newest stable = immediate rollback target
+          #
+          # build.yml also derives the next version from the newest stable tag,
+          # so both stable releases must always survive cleanup.
+          if (( KEEP_STABLE < 2 )); then
+            echo "ERROR: KEEP_STABLE must be at least 2."
+            echo "Cleanup always preserves the current stable release and the immediately previous stable release for rollback."
+            exit 1
+          fi
+
+          if [[ "${DRY_RUN}" != "true" && "${DRY_RUN}" != "false" ]]; then
+            echo "ERROR: DRY_RUN must be 'true' or 'false'. Got: '${DRY_RUN}'"
+            exit 1
+          fi
+
+      - name: Fetch repository tags
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git init .
+          git config --local gc.auto 0
+          git remote add origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --force --prune --tags origin
+
+      - name: Resolve components
+        id: components
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          component_id_from_path() {
+            local component="$1"
+
+            if [[ "${component}" == "." || "${component}" == "/" || "${component}" == "root" ]]; then
+              echo "root"
+              return
+            fi
+
+            component="${component%/}"
+
+            echo "${component}" |
+              tr '[:upper:]' '[:lower:]' |
+              sed \
+                -e 's#[/\\]#-#g' \
+                -e 's#[^a-z0-9._-]#-#g'
+          }
+
+          declare -A component_map=()
+
+          # Components represented by existing version tags. This keeps
+          # cleanup working even after a service directory is removed.
+          while IFS= read -r component_id; do
+            [[ -z "${component_id}" ]] && continue
+            component_map["${component_id}"]=1
+          done < <(
+            git tag -l '*/v*' |
+              sed -n 's#^\(.\+\)/v[0-9].*$#\1#p' |
+              sort -u
+          )
+
+          # Components currently present in the repository. This catches a
+          # new component that has GHCR images but no Git tag yet.
+          git fetch --depth=1 origin "${GITHUB_SHA}" || true
+          git checkout --force "${GITHUB_SHA}" 2>/dev/null || true
+
+          while IFS= read -r dockerfile; do
+            [[ -z "${dockerfile}" ]] && continue
+
+            if [[ "${dockerfile}" == "Dockerfile" ]]; then
+              component_id="root"
+            else
+              directory="${dockerfile%/Dockerfile}"
+              component_id="$(component_id_from_path "${directory}")"
+            fi
+
+            component_map["${component_id}"]=1
+          done < <(
+            git ls-files |
+              awk '$0 == "Dockerfile" || $0 ~ /\/Dockerfile$/ { print }'
+          )
+
+          requested="${REQUESTED_SERVICE:-all}"
+
+          if [[ "${requested}" != "all" ]]; then
+            requested_id="$(component_id_from_path "${requested}")"
+
+            if [[ -z "${component_map[${requested_id}]+x}" ]]; then
+              echo "ERROR: '${requested}' resolved to '${requested_id}', but no matching component was found."
+              echo
+              echo "Available component IDs:"
+              printf '  %s\n' "${!component_map[@]}" | sort
+              exit 1
+            fi
+
+            components_json="[\"${requested_id}\"]"
+          else
+            if [[ ${#component_map[@]} -eq 0 ]]; then
+              echo "No components found."
+              echo 'components=[]' >> "${GITHUB_OUTPUT}"
+              echo 'has_components=false' >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+
+            components_json="$({
+              printf '%s\n' "${!component_map[@]}" |
+                sort |
+                awk '
+                  BEGIN { printf "[" }
+                  {
+                    gsub(/\\/, "\\\\")
+                    gsub(/"/, "\\\"")
+                    if (NR > 1) printf ","
+                    printf "\"%s\"", $0
+                  }
+                  END { print "]" }
+                '
+            })"
+          fi
+
+          echo "Components: ${components_json}"
+          echo "components=${components_json}" >> "${GITHUB_OUTPUT}"
+          echo 'has_components=true' >> "${GITHUB_OUTPUT}"
+
+      - name: Cleanup components
+        if: steps.components.outputs.has_components == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMPONENTS_JSON: ${{ steps.components.outputs.components }}
+        run: |
+          set -euo pipefail
+
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          REPOSITORY_NAME="${GITHUB_REPOSITORY#*/}"
+
+          owner_type="$(gh api "/users/${OWNER}" --jq '.type')"
+
+          case "${owner_type}" in
+            Organization)
+              package_api_prefix="/orgs/${OWNER}/packages/container"
+              ;;
+            User)
+              package_api_prefix="/users/${OWNER}/packages/container"
+              ;;
+            *)
+              echo "ERROR: Unsupported GitHub owner type '${owner_type}' for '${OWNER}'."
+              exit 1
+              ;;
+          esac
+
+          delete_git_tag() {
+            local tag="$1"
+
+            if [[ "${DRY_RUN}" == "true" ]]; then
+              echo "DRY RUN: would delete Git tag: ${tag}"
+              return
+            fi
+
+            git push origin ":refs/tags/${tag}"
+            echo "Deleted Git tag: ${tag}"
+          }
+
+          cleanup_git_tag_channel() {
+            local component_id="$1"
+            local channel="$2"
+            local keep="$3"
+            local regex
+            local escaped_component_id
+
+            escaped_component_id="$(printf '%s' "${component_id}" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
+
+            case "${channel}" in
+              stable)
+                regex="^${escaped_component_id}/v[0-9]+\\.[0-9]+\\.[0-9]+$"
+                ;;
+              rc)
+                regex="^${escaped_component_id}/v[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[0-9]+$"
+                ;;
+              beta)
+                regex="^${escaped_component_id}/v[0-9]+\\.[0-9]+\\.[0-9]+-beta\\.[0-9]+$"
+                ;;
+              *)
+                echo "ERROR: Unknown channel '${channel}'."
+                exit 1
+                ;;
+            esac
+
+            mapfile -t tags < <(
+              git tag -l "${component_id}/v*" |
+                grep -E "${regex}" |
+                sort -V -r || true
+            )
+
+            echo "Git ${channel}: found ${#tags[@]}, keeping ${keep}."
+
+            for ((i=keep; i<${#tags[@]}; i++)); do
+              delete_git_tag "${tags[$i]}"
+            done
+          }
+
+          delete_package_version() {
+            local endpoint="$1"
+            local version_id="$2"
+            local semantic_tag="$3"
+
+            if [[ "${DRY_RUN}" == "true" ]]; then
+              echo "DRY RUN: would delete GHCR package version ${version_id} (${semantic_tag})"
+              return
+            fi
+
+            gh api \
+              --method DELETE \
+              "${endpoint}/${version_id}"
+
+            echo "Deleted GHCR package version ${version_id} (${semantic_tag})"
+          }
+
+          cleanup_image_channel() {
+            local endpoint="$1"
+            local component_id="$2"
+            local channel="$3"
+            local keep="$4"
+            local rows_file="$5"
+            local regex
+
+            case "${channel}" in
+              stable)
+                regex='^[0-9]+\.[0-9]+\.[0-9]+$'
+                ;;
+              rc)
+                regex='^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'
+                ;;
+              beta)
+                regex='^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'
+                ;;
+              *)
+                echo "ERROR: Unknown channel '${channel}'."
+                exit 1
+                ;;
+            esac
+
+            mapfile -t candidates < <(
+              awk -F '\t' -v regex="${regex}" '
+                {
+                  id=$1
+                  created=$2
+                  tags=$3
+                  count=split(tags, a, ",")
+
+                  for (i=1; i<=count; i++) {
+                    if (a[i] ~ regex) {
+                      # Put the semantic version first so sort -V determines
+                      # release order. This is critical for stable rollback:
+                      # an older version rebuilt later must not become the
+                      # apparent "previous stable" merely due to created_at.
+                      print a[i] "\t" id "\t" created
+                      break
+                    }
+                  }
+                }
+              ' "${rows_file}" |
+                sort -t $'\t' -k1,1Vr
+            )
+
+            echo "GHCR ${channel}: found ${#candidates[@]}, keeping ${keep}."
+
+            for ((i=keep; i<${#candidates[@]}; i++)); do
+              IFS=$'\t' read -r semantic_tag version_id created <<< "${candidates[$i]}"
+              delete_package_version "${endpoint}" "${version_id}" "${semantic_tag}"
+            done
+          }
+
+          cleanup_component_images() {
+            local component_id="$1"
+            local package_name="${REPOSITORY_NAME}/${component_id}"
+            local encoded_package_name="${package_name//\//%2F}"
+            local endpoint="${package_api_prefix}/${encoded_package_name}/versions"
+            local rows_file
+            local error_file
+
+            rows_file="$(mktemp)"
+            error_file="$(mktemp)"
+
+            if ! gh api \
+              --paginate \
+              "${endpoint}?per_page=100" \
+              --jq '.[] | [.id, .created_at, (.metadata.container.tags | join(","))] | @tsv' \
+              >"${rows_file}" 2>"${error_file}"
+            then
+              if grep -qE 'HTTP 404|Not Found' "${error_file}"; then
+                echo "No GHCR package found for '${package_name}'; skipping images."
+                rm -f "${rows_file}" "${error_file}"
+                return
+              fi
+
+              cat "${error_file}" >&2
+              rm -f "${rows_file}" "${error_file}"
+              return 1
+            fi
+
+            rm -f "${error_file}"
+
+            cleanup_image_channel "${endpoint}" "${component_id}" stable "${KEEP_STABLE}" "${rows_file}"
+            cleanup_image_channel "${endpoint}" "${component_id}" rc "${KEEP_RC}" "${rows_file}"
+            cleanup_image_channel "${endpoint}" "${component_id}" beta "${KEEP_BETA}" "${rows_file}"
+
+            rm -f "${rows_file}"
+          }
+
+          # Convert the small JSON array created by our own workflow into one
+          # component ID per line without adding a jq dependency.
+          mapfile -t components < <(
+            printf '%s' "${COMPONENTS_JSON}" |
+              sed -e 's/^\[//' -e 's/\]$//' -e 's/","/\n/g' -e 's/^"//' -e 's/"$//'
+          )
+
+          {
+            echo "## Component artifact cleanup"
+            echo
+            echo "- Dry run: \`${DRY_RUN}\`"
+            echo "- Keep stable per component: \`${KEEP_STABLE}\` (minimum 2: current + immediate rollback)"
+            echo "- Keep RC per component: \`${KEEP_RC}\`"
+            echo "- Keep beta per component: \`${KEEP_BETA}\`"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          for component_id in "${components[@]}"; do
+            [[ -z "${component_id}" ]] && continue
+
+            echo
+            echo "============================================================"
+            echo "Cleaning component: ${component_id}"
+            echo "============================================================"
+
+            # Delete GHCR package versions first. A package version contains
+            # both the semantic-version tag and sha-<commit>, so deleting the
+            # package version removes both aliases for that image digest.
+            cleanup_component_images "${component_id}"
+
+            # Git tags are retained independently by release channel.
+            cleanup_git_tag_channel "${component_id}" stable "${KEEP_STABLE}"
+            cleanup_git_tag_channel "${component_id}" rc "${KEEP_RC}"
+            cleanup_git_tag_channel "${component_id}" beta "${KEEP_BETA}"
+
+            {
+              echo "### ${component_id}"
+              echo "Cleanup processed successfully."
+              echo
+            } >> "${GITHUB_STEP_SUMMARY}"
+          done
+
+      - name: Cleanup summary when no components exist
+        if: steps.components.outputs.has_components != 'true'
+        shell: bash
+        run: |
+          {
+            echo "## Component artifact cleanup"
+            echo
+            echo "No component tags or Dockerfile-backed components were found."
+          } >> "${GITHUB_STEP_SUMMARY}"
