@@ -628,7 +628,7 @@ function Get-WorkspacePackageDirectories {
     }
 
     $package = Read-JsonFile $packageJson
-    $patterns = Get-WorkspacePatterns $package
+    $patterns = @(Get-WorkspacePatterns $package)
 
     if ($patterns.Count -eq 0) {
         return $packages
@@ -721,7 +721,7 @@ function Get-NodeDependencies {
         }
     }
 
-    $result = $dependencies.ToArray()
+    $result = @($dependencies)
     [Array]::Sort($result, [System.StringComparer]::Ordinal)
 
     return $result
