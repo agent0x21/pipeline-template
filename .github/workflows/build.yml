@@ -97,7 +97,7 @@ concurrency:
 env:
   VERSION_SCRIPT: .github/scripts/versioning/version.ps1
   NUGET_SOURCE_NAME: github
-  NUGET_SOURCE_URL: https://nuget.pkg.github.com/AppliedTechnologyServices/index.json
+  NUGET_SOURCE_URL:
 
 defaults:
   run:
