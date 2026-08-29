@@ -110,7 +110,7 @@ jobs:
 
   discover:
     name: Discover services
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     outputs:
       matrix: ${{ steps.discover.outputs.matrix }}
@@ -219,7 +219,7 @@ jobs:
     # This prevents the placeholder matrix entry from actually running.
     if: needs.discover.outputs.has-services == 'true'
 
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     strategy:
       fail-fast: false
@@ -402,7 +402,7 @@ jobs:
     # Same empty-matrix protection as the version job.
     if: needs.discover.outputs.has-services == 'true'
 
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     strategy:
       fail-fast: false
@@ -689,7 +689,7 @@ jobs:
 
     if: needs.discover.outputs.has-services == 'true'
 
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     strategy:
       fail-fast: false
@@ -818,7 +818,7 @@ jobs:
 
     if: needs.discover.outputs.has-services == 'true'
 
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - name: Checkout repository
