@@ -1,0 +1,81 @@
+{
+  "services": [
+    {
+      "slug": "server-web-api",
+      "name": "TimeClock.Server.WebApi",
+      "type": "dotnet",
+      "path": "src/Server/TimeClock.Server.WebApi",
+      "project": "src/Server/TimeClock.Server.WebApi/TimeClock.Server.WebApi.csproj",
+      "dockerfile": "src/Server/TimeClock.Server.WebApi/Dockerfile",
+      "docker_context": ".",
+      "dotnet_version": "10.0.x",
+      "depends_on": [
+        "src/Server/TimeClock.Server.Core",
+        "src/Server/TimeClock.Server.Data.ApplicationCenter",
+        "src/Server/TimeClock.Server.Data.BadgeData",
+        "src/Server/TimeClock.Server.Data.CommonData",
+        "src/Server/TimeClock.Server.Data.Postgres",
+        "src/Server/TimeClock.Server.Services",
+        "src/Server/TimeClock.Server.SignalR",
+        "src/Server/TimeClock.Server.WebApi",
+        "src/TimeClock.Shared"
+      ]
+    },
+    {
+      "slug": "server-workers-data-retention-processor",
+      "name": "TimeClock.Server.Workers.DataRetentionProcessor",
+      "type": "dotnet",
+      "path": "src/Server/TimeClock.Server.Workers.DataRetentionProcessor",
+      "project": "src/Server/TimeClock.Server.Workers.DataRetentionProcessor/TimeClock.Server.Workers.DataRetentionProcessor.csproj",
+      "dockerfile": "src/Server/TimeClock.Server.Workers.DataRetentionProcessor/Dockerfile",
+      "docker_context": ".",
+      "dotnet_version": "10.0.x",
+      "depends_on": [
+        "src/Server/TimeClock.Server.Core",
+        "src/Server/TimeClock.Server.Data.Postgres",
+        "src/Server/TimeClock.Server.Workers.DataRetentionProcessor",
+        "src/TimeClock.Shared"
+      ]
+    },
+    {
+      "slug": "server-workers-heartbeat-monitor",
+      "name": "TimeClock.Server.Workers.HeartbeatMonitor",
+      "type": "dotnet",
+      "path": "src/Server/TimeClock.Server.Workers.HeartbeatMonitor",
+      "project": "src/Server/TimeClock.Server.Workers.HeartbeatMonitor/TimeClock.Server.Workers.HeartbeatMonitor.csproj",
+      "dockerfile": "src/Server/TimeClock.Server.Workers.HeartbeatMonitor/Dockerfile",
+      "docker_context": ".",
+      "dotnet_version": "10.0.x",
+      "depends_on": [
+        "src/Server/TimeClock.Server.Core",
+        "src/Server/TimeClock.Server.Data.ApplicationCenter",
+        "src/Server/TimeClock.Server.Data.BadgeData",
+        "src/Server/TimeClock.Server.Data.CommonData",
+        "src/Server/TimeClock.Server.Data.Postgres",
+        "src/Server/TimeClock.Server.Services",
+        "src/Server/TimeClock.Server.SignalR",
+        "src/Server/TimeClock.Server.Workers.HeartbeatMonitor",
+        "src/TimeClock.Shared"
+      ]
+    },
+    {
+      "slug": "server-workers-punch-log-processor",
+      "name": "TimeClock.Server.Workers.PunchLogProcessor",
+      "type": "dotnet",
+      "path": "src/Server/TimeClock.Server.Workers.PunchLogProcessor",
+      "project": "src/Server/TimeClock.Server.Workers.PunchLogProcessor/TimeClock.Server.Workers.PunchLogProcessor.csproj",
+      "dockerfile": "src/Server/TimeClock.Server.Workers.PunchLogProcessor/Dockerfile",
+      "docker_context": ".",
+      "dotnet_version": "10.0.x",
+      "depends_on": [
+        "src/Server/TimeClock.Server.Core",
+        "src/Server/TimeClock.Server.Data.BadgeData",
+        "src/Server/TimeClock.Server.Data.CommonData",
+        "src/Server/TimeClock.Server.Data.Postgres",
+        "src/Server/TimeClock.Server.Services",
+        "src/Server/TimeClock.Server.Workers.PunchLogProcessor",
+        "src/TimeClock.Shared"
+      ]
+    }
+  ]
+}

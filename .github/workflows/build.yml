@@ -1,4 +1,59 @@
-name: Build and version
+name: Service Version Build
+
+# Per-service SemVer build pipeline.
+#
+# - Services are auto-discovered by .github/scripts/versioning/version.ps1:
+#   any folder under src/ containing a Dockerfile + exactly one .csproj.
+#
+# - Each service has an independent SemVer version tracked through git tags:
+#
+#     <slug>/v<major>.<minor>.<patch>
+#
+# - A service is affected when:
+#     - its own code changes
+#     - a directly referenced project changes
+#     - a transitively referenced project changes
+#
+# - Affected detection uses the current push range.
+#
+# - Version bump calculation considers all unreleased changes since the
+#   service's last canonical release.
+#
+# Version formats:
+#
+#   dev:
+#     M.N.P.beta.<buildnum>
+#
+#   qa:
+#     M.N.P.rc.<buildnum>
+#
+#   main:
+#     M.N.P+<buildnum>
+#
+# Conventional Commit behavior:
+#
+#   fix:                    -> Patch
+#   feat:                   -> Minor
+#   feat!:                  -> Major
+#   <type>!:                -> Major
+#   BREAKING CHANGE:        -> Major
+#
+# Default bump when no matching Conventional Commit exists:
+#
+#   Minor
+#
+# workflow_dispatch allows:
+#
+#   - explicitly overriding the bump type
+#   - force-building specific service slugs
+#
+# After all successful image pushes and tags, the pipeline writes one release
+# manifest for the whole environment. Deployment should consume that manifest
+# instead of selecting image tags independently per service.
+#
+# Empty service discovery is handled safely. GitHub Actions does not permit an
+# empty matrix vector, so a placeholder matrix is supplied when no services are
+# discovered. The affected jobs are then skipped through has-services=false.
 
 on:
   push:
@@ -9,624 +64,989 @@ on:
 
   workflow_dispatch:
     inputs:
-      target:
-        description: "Environment/branch to build"
-        required: true
+      bump-override:
+        description: "Force a bump type (overrides commit-message detection)"
         type: choice
+        default: Auto
         options:
-          - dev
-          - qa
+          - Auto
+          - Major
+          - Minor
+          - Patch
 
-      service:
-        description: "Service directory to build, or 'all'"
-        required: true
-        default: all
+      services:
+        description: "Comma-separated service slugs to force-build even if unchanged (blank = affected-only)"
         type: string
+        required: false
+        default: ""
+
+      validation-only:
+        description: "Validate workflow orchestration without NuGet restore, Docker build/push, or Git tag changes"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
   packages: write
-  actions: read
+
+concurrency:
+  group: service-version-build-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
-  REGISTRY: ghcr.io
+  VERSION_SCRIPT: .github/scripts/versioning/version.ps1
+  NUGET_SOURCE_NAME: github
+  NUGET_SOURCE_URL: https://nuget.pkg.github.com/AppliedTechnologyServices/index.json
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  # ===========================================================================
+  # DISCOVERY
+  # ===========================================================================
 
-  # ============================================================
-  # Detect Dockerfile-backed components.
-  #
-  # Push:
-  # Build only Dockerfile-backed components affected by the
-  # commits in the push.
-  #
-  # workflow_dispatch:
-  # Build either:
-  # - all Dockerfile-backed components
-  # - one explicitly requested component
-  #
-  # The selected target (dev/qa) determines the actual source
-  # branch and commit that will be built.
-  # ============================================================
-
-  detect:
-    name: Detect changed components
-    runs-on: self-hosted
+  discover:
+    name: Discover services
+    runs-on: ubuntu-latest
 
     outputs:
-      components: ${{ steps.detect.outputs.components }}
-      has_components: ${{ steps.detect.outputs.has_components }}
-      source_sha: ${{ steps.checkout.outputs.source_sha }}
-      branch: ${{ steps.checkout.outputs.branch }}
+      matrix: ${{ steps.discover.outputs.matrix }}
+      has-services: ${{ steps.discover.outputs.has-services }}
 
     steps:
       - name: Checkout repository
-        id: checkout
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
-          TARGET: ${{ inputs.target }}
+        uses: actions/checkout@v6
+
+      - name: Discover services
+        id: discover
         run: |
-          set -euo pipefail
+          echo "Repository service candidates:"
+          echo
 
-          git init .
-          git config --local gc.auto 0
+          echo "Dockerfiles:"
+          find src \
+            -type f \
+            -name Dockerfile \
+            -print \
+            2>/dev/null || true
 
-          if git remote get-url origin >/dev/null 2>&1; then
-            git remote set-url origin \
-              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          echo
+          echo ".NET projects:"
+          find src \
+            -type f \
+            -name '*.csproj' \
+            -print \
+            2>/dev/null || true
+
+          echo
+          echo "Running service discovery..."
+          echo
+
+          MATRIX="$(pwsh -NoProfile -File "$VERSION_SCRIPT" matrix)"
+
+          echo "Discovered service matrix:"
+          echo "$MATRIX"
+          echo
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+          if [ "$MATRIX" = "[]" ]; then
+            echo "has-services=false" >> "$GITHUB_OUTPUT"
+
+            echo "::warning::No services were discovered."
+            echo "::warning::A service must contain a Dockerfile and exactly one .csproj in the same directory."
           else
-            git remote add origin \
-              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+            echo "has-services=true" >> "$GITHUB_OUTPUT"
           fi
 
-          git fetch --force --prune --tags origin \
-            "+refs/heads/*:refs/remotes/origin/*"
-
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
-            if [[ -z "${TARGET}" ]]; then
-              echo "ERROR: Manual workflow requires a target branch."
-              exit 1
-            fi
-
-            source_ref="refs/remotes/origin/${TARGET}"
-
-            if ! git rev-parse --verify "${source_ref}^{commit}" >/dev/null 2>&1; then
-              echo "ERROR: Target branch '${TARGET}' was not found."
-              exit 1
-            fi
-
-            source_sha="$(git rev-parse "${source_ref}^{commit}")"
-            branch="${TARGET}"
-          else
-            source_sha="${GITHUB_SHA}"
-            branch="${GITHUB_REF_NAME}"
-          fi
-
-          echo "--------------------------------------"
-          echo "Event:      ${EVENT_NAME}"
-          echo "Branch:     ${branch}"
-          echo "Source SHA: ${source_sha}"
-          echo "--------------------------------------"
-
-          git checkout --force "${source_sha}"
-          git clean -ffdx
-
-          echo "source_sha=${source_sha}" >> "${GITHUB_OUTPUT}"
-          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
-
-      - name: Detect changed components
-        id: detect
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE_SHA: ${{ github.event.before }}
-          CURRENT_SHA: ${{ steps.checkout.outputs.source_sha }}
-          REQUESTED_SERVICE: ${{ inputs.service }}
+      - name: Discovery summary
         run: |
-          set -euo pipefail
+          {
+            echo "## 🔎 Service Discovery"
+            echo
 
-          declare -a files=()
-          declare -A component_map=()
+            if [ "${{ steps.discover.outputs.has-services }}" = "true" ]; then
+              echo "> ✅ Services discovered successfully."
+              echo
+              echo "| Service | Slug | Project | Dockerfile |"
+              echo "|---|---|---|---|"
 
-          find_component_for_file() {
-            local file="$1"
-            local directory
+              pwsh -NoProfile -File "$VERSION_SCRIPT" matrix \
+                | jq -r '.[] | "| `\(.name)` | `\(.slug)` | `\(.csproj)` | `\(.dockerfile)` |"'
 
-            if [[ -d "${file}" ]]; then
-              directory="${file}"
+              echo
+              echo "<details>"
+              echo "<summary>Raw discovery JSON</summary>"
+              echo
+              echo '```json'
+              pwsh -NoProfile -File "$VERSION_SCRIPT" matrix | jq .
+              echo '```'
+              echo
+              echo "</details>"
             else
-              directory="$(dirname "${file}")"
+              echo "> ⚠️ No services were discovered."
+              echo
+              echo "A service must currently contain:"
+              echo
+              echo "- a \`Dockerfile\`"
+              echo "- exactly one \`.csproj\`"
+              echo "- both files in the same directory"
+              echo
+              echo "### Expected layout"
+              echo
+              echo '```text'
+              echo 'src/'
+              echo '└── TimeClock.Server.WebApi/'
+              echo '    ├── Dockerfile'
+              echo '    └── TimeClock.Server.WebApi.csproj'
+              echo '```'
             fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
-            while true; do
-              if [[ -f "${directory}/Dockerfile" ]]; then
-                echo "${directory}"
-                return 0
-              fi
+  # ===========================================================================
+  # VERSION
+  # ===========================================================================
 
-              if [[ "${directory}" == "." || "${directory}" == "/" ]]; then
-                break
-              fi
+  version:
+    name: Version (${{ matrix.service.slug }})
 
-              directory="$(dirname "${directory}")"
-            done
+    needs:
+      - discover
 
-            if [[ -f "Dockerfile" ]]; then
-              echo "."
-              return 0
-            fi
+    # This prevents the placeholder matrix entry from actually running.
+    if: needs.discover.outputs.has-services == 'true'
 
-            return 1
-          }
-
-          list_components() {
-            git ls-files |
-              awk '
-                $0 == "Dockerfile" {
-                  print "."
-                  next
-                }
-
-                $0 ~ /\/Dockerfile$/ {
-                  sub(/\/Dockerfile$/, "")
-                  print
-                }
-              ' |
-              sort -u
-          }
-
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
-            requested_service="${REQUESTED_SERVICE:-all}"
-
-            # Remove a trailing slash so "apps/web/" and "apps/web"
-            # are treated the same.
-            if [[ "${requested_service}" != "/" ]]; then
-              requested_service="${requested_service%/}"
-            fi
-
-            echo "Manual build requested."
-            echo "Requested service: ${requested_service}"
-
-            if [[ "${requested_service}" == "all" ]]; then
-              while IFS= read -r component; do
-                [[ -z "${component}" ]] && continue
-                component_map["${component}"]=1
-              done < <(
-                list_components
-              )
-
-            else
-              matched=false
-
-              while IFS= read -r component; do
-                [[ -z "${component}" ]] && continue
-
-                if [[ "${component}" == "${requested_service}" ]]; then
-                  component_map["${component}"]=1
-                  matched=true
-                  break
-                fi
-              done < <(
-                list_components
-              )
-
-              if [[ "${matched}" != "true" ]]; then
-                echo
-                echo "ERROR: '${requested_service}' is not a valid Dockerfile-backed component."
-                echo
-                echo "Available services:"
-                echo "-------------------"
-
-                while IFS= read -r component; do
-                  [[ -z "${component}" ]] && continue
-                  echo "  ${component}"
-                done < <(
-                  list_components
-                )
-
-                echo
-                echo "You may also use:"
-                echo "  all"
-                exit 1
-              fi
-            fi
-
-          elif [[ -z "${BEFORE_SHA}" || "${BEFORE_SHA}" =~ ^0+$ ]]; then
-            mapfile -t files < <(
-              git diff-tree \
-                --root \
-                --no-commit-id \
-                --name-only \
-                -r \
-                "${CURRENT_SHA}"
-            )
-
-          else
-            # The authenticated origin is intentionally retained from
-            # the checkout step so this works on private repositories.
-            git fetch --force origin "${BEFORE_SHA}"
-
-            mapfile -t files < <(
-              git diff \
-                --name-only \
-                "${BEFORE_SHA}" \
-                "${CURRENT_SHA}"
-            )
-          fi
-
-          if [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
-            for file in "${files[@]}"; do
-              [[ -z "${file}" ]] && continue
-
-              component="$(
-                find_component_for_file "${file}" || true
-              )"
-
-              if [[ -n "${component}" ]]; then
-                echo "Matched '${file}' -> '${component}/Dockerfile'"
-                component_map["${component}"]=1
-              fi
-            done
-          fi
-
-          if [[ ${#component_map[@]} -eq 0 ]]; then
-            echo "No Dockerfile-backed components need to be built."
-            echo 'components=[]' >> "${GITHUB_OUTPUT}"
-            echo 'has_components=false' >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          # Build a JSON array without requiring Python, jq, etc.
-          components_json="$(
-            printf '%s\n' "${!component_map[@]}" |
-              sort |
-              awk '
-                BEGIN {
-                  printf "["
-                }
-
-                {
-                  gsub(/\\/,"\\\\")
-                  gsub(/"/,"\\\"")
-
-                  if (NR > 1) {
-                    printf ","
-                  }
-
-                  printf "\"%s\"", $0
-                }
-
-                END {
-                  print "]"
-                }
-              '
-          )"
-
-          echo "Components: ${components_json}"
-
-          echo "components=${components_json}" >> "${GITHUB_OUTPUT}"
-          echo 'has_components=true' >> "${GITHUB_OUTPUT}"
-
-  # ============================================================
-  # Build, version, push, and Git-tag each selected component.
-  #
-  # Version policy:
-  #
-  # dev
-  # next minor beta
-  # Example: 1.3.0-beta.<run_number>
-  #
-  # qa
-  # next minor RC
-  # Example: 1.3.0-rc.<run_number>
-  #
-  # main
-  # next minor stable
-  # Example: 1.3.0
-  #
-  # Stable Git tags are the source of truth:
-  #
-  # apps-web/v1.2.0
-  # apps-api/v2.4.0
-  #
-  # Prerelease tags do not advance the stable baseline.
-  # ============================================================
-
-  build:
-    name: Build ${{ matrix.component }}
-    needs: detect
-    if: needs.detect.outputs.has_components == 'true'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
-      matrix:
-        component: ${{ fromJSON(needs.detect.outputs.components) }}
 
-    # Prevent two runs from calculating/publishing a version for
-    # the same component at the same time.
-    concurrency:
-      group: build-version-${{ matrix.component }}
-      cancel-in-progress: false
+      # GitHub Actions rejects an empty matrix before the job-level `if` can
+      # protect it. Therefore provide a harmless placeholder when discovery
+      # returns no services.
+      matrix:
+        service: ${{ fromJson(needs.discover.outputs.has-services == 'true' && needs.discover.outputs.matrix || '[{"slug":"__none__"}]') }}
+
+    env:
+      SLUG: ${{ matrix.service.slug }}
 
     steps:
-      - name: Checkout repository and tags
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Refresh tags
         run: |
-          set -euo pipefail
+          git fetch --tags --force
 
-          git init .
-          git config --local gc.auto 0
-
-          if git remote get-url origin >/dev/null 2>&1; then
-            git remote set-url origin \
-              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          else
-            git remote add origin \
-              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          fi
-
-          git fetch --force --prune --tags origin \
-            "+refs/heads/*:refs/remotes/origin/*"
-
-          if ! git cat-file -e "${SOURCE_SHA}^{commit}" 2>/dev/null; then
-            git fetch --force origin "${SOURCE_SHA}"
-          fi
-
-          git checkout --force "${SOURCE_SHA}"
-          git clean -ffdx
-
-          echo "Checked out source commit: ${SOURCE_SHA}"
-
-      - name: Resolve component identity
-        id: component
-        shell: bash
-        env:
-          COMPONENT: ${{ matrix.component }}
+      - name: Compute version
+        id: plan
         run: |
-          set -euo pipefail
+          ARGS=(
+            plan
+            --slug "$SLUG"
+            --branch "${{ github.ref_name }}"
+            --bump "${{ inputs.bump-override || 'Auto' }}"
+            --buildnum "${{ github.run_number }}"
+          )
 
-          if [[ "${COMPONENT}" == "." ]]; then
-            dockerfile="./Dockerfile"
-            component_id="root"
-          else
-            dockerfile="${COMPONENT}/Dockerfile"
+          # ---------------------------------------------------------------
+          # Normal push
+          #
+          # Use exactly what changed in this push to determine whether the
+          # service needs to build.
+          # ---------------------------------------------------------------
 
-            component_id="$(
-              echo "${COMPONENT}" |
-                tr '[:upper:]' '[:lower:]' |
-                sed \
-                  -e 's#[/\\]#-#g' \
-                  -e 's#[^a-z0-9._-]#-#g'
-            )"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            ARGS+=(
+              --since
+              "${{ github.event.before }}"
+            )
           fi
 
-          if [[ ! -f "${dockerfile}" ]]; then
-            echo "ERROR: Dockerfile not found: ${dockerfile}"
+          # ---------------------------------------------------------------
+          # Manual dispatch
+          #
+          # A comma-separated list can force one or more services to build.
+          #
+          # Example:
+          #
+          #   api,worker,scheduler
+          # ---------------------------------------------------------------
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            IFS=',' read -ra WANTED <<< "${{ inputs.services }}"
+
+            for s in "${WANTED[@]}"; do
+              s="$(echo "$s" | xargs)"
+
+              if [ -n "$s" ] && [ "$s" = "$SLUG" ]; then
+                ARGS+=(--force)
+                break
+              fi
+            done
+          fi
+
+          echo "Version plan command:"
+          printf ' %q' pwsh -NoProfile -File "$VERSION_SCRIPT" "${ARGS[@]}"
+          echo
+          echo
+
+          pwsh -NoProfile -File "$VERSION_SCRIPT" \
+            "${ARGS[@]}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Show version plan
+        run: |
+          echo "Service:       $SLUG"
+          echo "Affected:      ${{ steps.plan.outputs.affected }}"
+          echo "Base version:  ${{ steps.plan.outputs.base_version }}"
+          echo "Bump:          ${{ steps.plan.outputs.bump }}"
+          echo "Version:       ${{ steps.plan.outputs.version }}"
+          echo "Image version: ${{ steps.plan.outputs.image_version }}"
+          echo "Change range:  ${{ steps.plan.outputs.change_range }}"
+          echo "Dependencies:  ${{ steps.plan.outputs.dep_dirs }}"
+          echo "Pending build: ${{ steps.plan.outputs.pending_build }}"
+          echo "Pending tag:   ${{ steps.plan.outputs.pending_tag }}"
+
+      - name: Mark pending build
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        run: |
+          PENDING_TAG="${{ steps.plan.outputs.pending_tag }}"
+
+          git config \
+            user.name \
+            "github-actions[bot]"
+
+          git config \
+            user.email \
+            "github-actions[bot]@users.noreply.github.com"
+
+          echo "Marking service build as pending:"
+          echo "  $PENDING_TAG"
+
+          git tag -f "$PENDING_TAG" HEAD
+          git push -f origin "refs/tags/${PENDING_TAG}"
+
+      - name: Validation pending marker
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only == true
+        run: |
+          echo "Validation-only mode is enabled."
+          echo "Would mark pending build:"
+          echo "  ${{ steps.plan.outputs.pending_tag }}"
+
+      - name: Version summary
+        run: |
+          {
+            echo "### ${{ matrix.service.name }}"
+            echo
+
+            if [ "${{ steps.plan.outputs.affected }}" = "true" ]; then
+              echo "- **Status:** Build required"
+              echo "- **Version:** \`${{ steps.plan.outputs.version }}\`"
+              echo "- **Bump:** \`${{ steps.plan.outputs.bump }}\`"
+              echo "- **Previous release:** \`${{ steps.plan.outputs.base_version }}\`"
+              echo "- **Change range:** \`${{ steps.plan.outputs.change_range }}\`"
+              echo "- **Dependencies:** \`${{ steps.plan.outputs.dep_dirs }}\`"
+              echo "- **Pending marker:** \`${{ steps.plan.outputs.pending_tag }}\`"
+            else
+              echo "- **Status:** Skipped"
+              echo "- No changes detected for this service or its dependencies."
+            fi
+
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save version plan
+        run: |
+          PLAN_DIR="${{ runner.temp }}/version-plans"
+          PLAN_FILE="$PLAN_DIR/${{ matrix.service.slug }}.env"
+
+          mkdir -p "$PLAN_DIR"
+
+          {
+            echo "affected=${{ steps.plan.outputs.affected }}"
+            echo "version=${{ steps.plan.outputs.version }}"
+            echo "image_version=${{ steps.plan.outputs.image_version }}"
+            echo "bump=${{ steps.plan.outputs.bump }}"
+            echo "base_version=${{ steps.plan.outputs.base_version }}"
+            echo "core_version=${{ steps.plan.outputs.core_version }}"
+            echo "release_tag=${{ steps.plan.outputs.release_tag }}"
+            echo "build_tag=${{ steps.plan.outputs.build_tag }}"
+            echo "pending_tag=${{ steps.plan.outputs.pending_tag }}"
+            echo "pending_build=${{ steps.plan.outputs.pending_build }}"
+          } > "$PLAN_FILE"
+
+      - name: Upload version plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan-${{ matrix.service.slug }}
+          path: ${{ runner.temp }}/version-plans/${{ matrix.service.slug }}.env
+          retention-days: 1
+
+  # ===========================================================================
+  # BUILD
+  # ===========================================================================
+
+  build:
+    name: Build (${{ matrix.service.slug }})
+
+    needs:
+      - discover
+      - version
+
+    # Same empty-matrix protection as the version job.
+    if: needs.discover.outputs.has-services == 'true'
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        service: ${{ fromJson(needs.discover.outputs.has-services == 'true' && needs.discover.outputs.matrix || '[{"slug":"__none__"}]') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download version plan
+        uses: actions/download-artifact@v4
+        with:
+          name: plan-${{ matrix.service.slug }}
+          path: ${{ runner.temp }}/version-plans
+
+      - name: Load version plan
+        id: plan
+        run: |
+          PLAN_FILE="${{ runner.temp }}/version-plans/${{ matrix.service.slug }}.env"
+
+          if [ ! -f "$PLAN_FILE" ]; then
+            echo "::error::Version plan does not exist: $PLAN_FILE"
             exit 1
           fi
 
-          repository="$(
-            echo "${GITHUB_REPOSITORY}" |
-              tr '[:upper:]' '[:lower:]'
-          )"
+          cat "$PLAN_FILE" >> "$GITHUB_OUTPUT"
 
-          image="${REGISTRY}/${repository}/${component_id}"
-
-          echo "--------------------------------------"
-          echo "Component:  ${COMPONENT}"
-          echo "ID:         ${component_id}"
-          echo "Dockerfile: ${dockerfile}"
-          echo "Image:      ${image}"
-          echo "--------------------------------------"
-
-          echo "id=${component_id}" >> "${GITHUB_OUTPUT}"
-          echo "image=${image}" >> "${GITHUB_OUTPUT}"
-          echo "dockerfile=${dockerfile}" >> "${GITHUB_OUTPUT}"
-
-      - name: Calculate component version
-        id: version
-        shell: bash
-        env:
-          COMPONENT_ID: ${{ steps.component.outputs.id }}
-          BRANCH: ${{ needs.detect.outputs.branch }}
-          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
-          RUN_NUMBER: ${{ github.run_number }}
+      - name: Build decision
         run: |
-          set -euo pipefail
-
-          # Re-fetch tags inside the serialized section so the version
-          # calculation sees tags created by an earlier queued run.
-          git fetch --force --tags origin
-
-          stable_versions="$( {
-            git tag -l "${COMPONENT_ID}/v*" |
-              sed -n "s#^${COMPONENT_ID}/v##p" |
-              grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true
-          } )"
-
-          if [[ -z "${stable_versions}" ]]; then
-            current="0.0.0"
+          if [ "${{ steps.plan.outputs.affected }}" = "true" ]; then
+            echo "Building ${{ matrix.service.slug }}"
+            echo "Version: ${{ steps.plan.outputs.version }}"
           else
-            current="$(
-              printf '%s\n' "${stable_versions}" |
-                sort -V |
-                tail -n 1
-            )"
+            echo "Skipping ${{ matrix.service.slug }} - no relevant changes."
           fi
 
-          IFS='.' read -r major minor patch <<< "${current}"
+      # -----------------------------------------------------------------------
+      # .NET
+      # -----------------------------------------------------------------------
 
-          # This workflow models each dev -> qa -> main promotion
-          # cycle as the next minor release.
-          next_major="${major}"
-          next_minor=$((minor + 1))
-          next_patch=0
+      - name: Setup .NET
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ matrix.service.dotnet_version || '10.0.x' }}
+        env:
+          # /usr/share/dotnet on the self-hosted runner may be root-owned.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
 
-          base_version="${next_major}.${next_minor}.${next_patch}"
+      - name: Configure GitHub NuGet source
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+        run: |
+          dotnet nuget remove source "$NUGET_SOURCE_NAME" \
+            >/dev/null 2>&1 || true
 
-          case "${BRANCH}" in
-            dev)
-              version="${base_version}-beta.${RUN_NUMBER}"
-              ;;
+          dotnet nuget add source \
+            --username "${{ github.actor }}" \
+            --password "${{ secrets.GITHUB_TOKEN }}" \
+            --store-password-in-clear-text \
+            --name "$NUGET_SOURCE_NAME" \
+            "$NUGET_SOURCE_URL"
 
-            qa)
-              version="${base_version}-rc.${RUN_NUMBER}"
-              ;;
+      - name: Restore
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+        run: |
+          dotnet restore \
+            "${{ matrix.service.csproj }}"
 
-            main)
-              version="${base_version}"
-              ;;
+      - name: Build
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+        run: |
+          dotnet build \
+            "${{ matrix.service.csproj }}" \
+            --no-restore \
+            --configuration Release
 
-            *)
-              echo "ERROR: Versioning is only defined for dev, qa, and main."
-              echo "Current branch: ${BRANCH}"
-              exit 1
-              ;;
-          esac
+      # -----------------------------------------------------------------------
+      # Tests
+      #
+      # Test projects are discovered by convention so normal developer pushes
+      # do not need manual service or test selection.
+      # -----------------------------------------------------------------------
 
-          git_tag="${COMPONENT_ID}/v${version}"
+      - name: Test
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+        run: |
+          SERVICE_NAME="${{ matrix.service.name }}"
 
-          echo "--------------------------------------"
-          echo "Component:       ${COMPONENT_ID}"
-          echo "Branch:          ${BRANCH}"
-          echo "Commit:          ${SOURCE_SHA}"
-          echo "Stable baseline: ${current}"
-          echo "Version:         ${version}"
-          echo "Git tag:         ${git_tag}"
-          echo "--------------------------------------"
+          mapfile -t TEST_PROJECTS < <(
+            find . \
+              -type f \
+              \( -name "${SERVICE_NAME}.Tests.csproj" \
+                 -o -name "${SERVICE_NAME}.Test.csproj" \
+                 -o -name "*${SERVICE_NAME}*Tests.csproj" \
+                 -o -name "*${SERVICE_NAME}*Test.csproj" \) \
+              -print \
+              | sort
+          )
 
-          # Idempotent re-runs are allowed only when an existing tag
-          # already points at this exact source commit.
-          if git rev-parse -q \
-            --verify \
-            "refs/tags/${git_tag}" \
-            >/dev/null
-          then
-            tagged_sha="$(
-              git rev-list -n 1 "${git_tag}"
-            )"
+          if [ "${#TEST_PROJECTS[@]}" -eq 0 ]; then
+            echo "No test projects found for ${SERVICE_NAME}."
+            exit 0
+          fi
 
-            if [[ "${tagged_sha}" != "${SOURCE_SHA}" ]]; then
-              echo "ERROR: ${git_tag} already exists on ${tagged_sha}."
-              echo "Expected source commit: ${SOURCE_SHA}"
+          for test_project in "${TEST_PROJECTS[@]}"; do
+            echo "Testing ${test_project}"
+
+            dotnet test \
+              "$test_project" \
+              --configuration Release
+          done
+
+      # -----------------------------------------------------------------------
+      # Node / React
+      # -----------------------------------------------------------------------
+
+      - name: Setup Node
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.service.node_version || '22' }}
+          cache-dependency-path: ${{ matrix.service.path }}/package-lock.json
+
+      - name: Install Node dependencies
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
+        working-directory: ${{ matrix.service.path }}
+        run: |
+          if [ -n "${{ matrix.service.install_command }}" ]; then
+            ${{ matrix.service.install_command }}
+          elif [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Build Node app
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
+        working-directory: ${{ matrix.service.path }}
+        run: |
+          if [ -n "${{ matrix.service.build_command }}" ]; then
+            ${{ matrix.service.build_command }}
+          else
+            npm run build
+          fi
+
+      - name: Test Node app
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node' && matrix.service.test_command != ''
+        working-directory: ${{ matrix.service.path }}
+        run: |
+          ${{ matrix.service.test_command }}
+
+      - name: Validate build inputs
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only == true
+        env:
+          GHCR_REPOSITORY: ${{ github.repository }}
+        run: |
+          GHCR_IMAGE="ghcr.io/${GHCR_REPOSITORY,,}/${{ matrix.service.slug }}"
+
+          echo "Validation-only mode is enabled."
+          echo "Skipping NuGet restore, dotnet build/test, Docker build, and image push."
+          echo
+          echo "Validating expected build inputs:"
+          echo "  Type:       ${{ matrix.service.type }}"
+          echo "  Path:       ${{ matrix.service.path }}"
+          echo "  Project:    ${{ matrix.service.csproj }}"
+          echo "  Dockerfile: ${{ matrix.service.dockerfile }}"
+          echo "  Image:      ${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}"
+
+          if [ ! -d "${{ matrix.service.path }}" ]; then
+            echo "::error::Service path does not exist: ${{ matrix.service.path }}"
+            exit 1
+          fi
+
+          if [ "${{ matrix.service.type }}" = "dotnet" ] && [ ! -f "${{ matrix.service.csproj }}" ]; then
+            echo "::error::Project file does not exist: ${{ matrix.service.csproj }}"
+            exit 1
+          fi
+
+          if [ ! -f "${{ matrix.service.dockerfile }}" ]; then
+            echo "::error::Dockerfile does not exist: ${{ matrix.service.dockerfile }}"
+            exit 1
+          fi
+
+      # -----------------------------------------------------------------------
+      # Docker / GHCR
+      # -----------------------------------------------------------------------
+
+      - name: Docker build
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        env:
+          GHCR_REPOSITORY: ${{ github.repository }}
+        run: |
+          GHCR_IMAGE="ghcr.io/${GHCR_REPOSITORY,,}/${{ matrix.service.slug }}"
+
+          DOCKER_ARGS=()
+
+          if [ "${{ matrix.service.type }}" = "dotnet" ]; then
+            DOCKER_ARGS+=(
+              --build-arg "NUGET_URL=${NUGET_SOURCE_URL}"
+              --build-arg "NUGET_USERNAME=${{ github.actor }}"
+              --build-arg "NUGET_PASSWORD=${{ secrets.GITHUB_TOKEN }}"
+            )
+          fi
+
+          echo "Building:"
+          echo "  ${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}"
+
+          docker build \
+            "${DOCKER_ARGS[@]}" \
+            -f "${{ matrix.service.dockerfile }}" \
+            -t "${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}" \
+            "${{ matrix.service.docker_context }}"
+
+      - name: Log in to GHCR
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to GHCR
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        env:
+          GHCR_REPOSITORY: ${{ github.repository }}
+        run: |
+          GHCR_IMAGE="ghcr.io/${GHCR_REPOSITORY,,}/${{ matrix.service.slug }}"
+
+          docker push \
+            "${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}"
+
+      # -----------------------------------------------------------------------
+      # Optional Azure Container Registry
+      #
+      # Required repository/org configuration:
+      #
+      #   vars.ACR_REGISTRY
+      #       Example: myregistry.azurecr.io
+      #
+      #   secrets.ACR_USERNAME
+      #   secrets.ACR_PASSWORD
+      #
+      # Uncomment the following steps to enable ACR publishing.
+      # -----------------------------------------------------------------------
+
+      # - name: Log in to ACR
+      #   if: steps.plan.outputs.affected == 'true'
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: ${{ vars.ACR_REGISTRY }}
+      #     username: ${{ secrets.ACR_USERNAME }}
+      #     password: ${{ secrets.ACR_PASSWORD }}
+
+      # - name: Tag image for ACR
+      #   if: steps.plan.outputs.affected == 'true'
+      #   env:
+      #     GHCR_IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.service.slug }}
+      #     ACR_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ matrix.service.slug }}
+      #   run: |
+      #     docker tag \
+      #       "${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}" \
+      #       "${ACR_IMAGE}:${{ steps.plan.outputs.image_version }}"
+
+      # - name: Push to ACR
+      #   if: steps.plan.outputs.affected == 'true'
+      #   env:
+      #     ACR_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ matrix.service.slug }}
+      #   run: |
+      #     docker push \
+      #       "${ACR_IMAGE}:${{ steps.plan.outputs.image_version }}"
+
+  # ===========================================================================
+  # PUBLISH / TAG
+  # ===========================================================================
+
+  publish:
+    name: Publish tags (${{ matrix.service.slug }})
+
+    needs:
+      - discover
+      - build
+
+    if: needs.discover.outputs.has-services == 'true'
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        service: ${{ fromJson(needs.discover.outputs.has-services == 'true' && needs.discover.outputs.matrix || '[{"slug":"__none__"}]') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download version plan
+        uses: actions/download-artifact@v4
+        with:
+          name: plan-${{ matrix.service.slug }}
+          path: ${{ runner.temp }}/version-plans
+
+      - name: Load version plan
+        id: plan
+        run: |
+          PLAN_FILE="${{ runner.temp }}/version-plans/${{ matrix.service.slug }}.env"
+
+          if [ ! -f "$PLAN_FILE" ]; then
+            echo "::error::Version plan does not exist: $PLAN_FILE"
+            exit 1
+          fi
+
+          cat "$PLAN_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Tag successful artifact
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        run: |
+          git config \
+            user.name \
+            "github-actions[bot]"
+
+          git config \
+            user.email \
+            "github-actions[bot]@users.noreply.github.com"
+
+          BUILD_TAG="${{ steps.plan.outputs.build_tag }}"
+
+          echo "Creating build tag:"
+          echo "  $BUILD_TAG"
+
+          if git rev-parse "$BUILD_TAG" >/dev/null 2>&1; then
+            echo "::error::Build tag already exists: $BUILD_TAG"
+            exit 1
+          fi
+
+          git tag "$BUILD_TAG"
+          git push origin "$BUILD_TAG"
+
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            RELEASE_TAG="${{ steps.plan.outputs.release_tag }}"
+
+            echo
+            echo "Creating canonical release tag:"
+            echo "  $RELEASE_TAG"
+
+            if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
+              echo "::error::Release tag already exists: $RELEASE_TAG"
               exit 1
             fi
 
-            echo "tag_exists=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "tag_exists=false" >> "${GITHUB_OUTPUT}"
+            git tag "$RELEASE_TAG"
+            git push origin "$RELEASE_TAG"
           fi
 
-          echo "current=${current}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "git_tag=${git_tag}" >> "${GITHUB_OUTPUT}"
+          PENDING_TAG="${{ steps.plan.outputs.pending_tag }}"
 
-      - name: Login to GHCR
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo
+          echo "Clearing pending build marker:"
+          echo "  $PENDING_TAG"
+
+          git tag -d "$PENDING_TAG" >/dev/null 2>&1 || true
+          git push origin ":refs/tags/${PENDING_TAG}" >/dev/null 2>&1 || true
+
+      - name: Validate publish decision
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only == true
         run: |
-          set -euo pipefail
+          echo "Validation-only mode is enabled."
+          echo "Would create build tag:"
+          echo "  ${{ steps.plan.outputs.build_tag }}"
 
-          echo "${GITHUB_TOKEN}" |
-            docker login "${REGISTRY}" \
-              --username "${GITHUB_ACTOR}" \
-              --password-stdin
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "Would create canonical release tag:"
+            echo "  ${{ steps.plan.outputs.release_tag }}"
+          fi
 
-      - name: Build versioned image
-        shell: bash
-        env:
-          COMPONENT: ${{ matrix.component }}
-          DOCKERFILE: ${{ steps.component.outputs.dockerfile }}
-          IMAGE: ${{ steps.component.outputs.image }}
-          VERSION: ${{ steps.version.outputs.version }}
-          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
-          BUILD_BRANCH: ${{ needs.detect.outputs.branch }}
+          echo "Would clear pending build marker:"
+          echo "  ${{ steps.plan.outputs.pending_tag }}"
+
+      - name: Publish summary
         run: |
-          set -euo pipefail
-
-          echo "--------------------------------------"
-          echo "Component:  ${COMPONENT}"
-          echo "Dockerfile: ${DOCKERFILE}"
-          echo "Context:    ."
-          echo "Branch:     ${BUILD_BRANCH}"
-          echo "Commit:     ${SOURCE_SHA}"
-          echo "Image:      ${IMAGE}:${VERSION}"
-          echo "SHA tag:    ${IMAGE}:sha-${SOURCE_SHA}"
-          echo "--------------------------------------"
-
-          docker build \
-            --file "${DOCKERFILE}" \
-            --build-arg "VERSION=${VERSION}" \
-            --label "org.opencontainers.image.version=${VERSION}" \
-            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
-            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --tag "${IMAGE}:${VERSION}" \
-            --tag "${IMAGE}:sha-${SOURCE_SHA}" \
-            .
-
-      - name: Push image tags
-        shell: bash
-        env:
-          IMAGE: ${{ steps.component.outputs.image }}
-          VERSION: ${{ steps.version.outputs.version }}
-          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-
-          docker push "${IMAGE}:${VERSION}"
-          docker push "${IMAGE}:sha-${SOURCE_SHA}"
-
-      - name: Create component Git tag
-        if: steps.version.outputs.tag_exists != 'true'
-        shell: bash
-        env:
-          GIT_TAG: ${{ steps.version.outputs.git_tag }}
-          VERSION: ${{ steps.version.outputs.version }}
-          COMPONENT_ID: ${{ steps.component.outputs.id }}
-          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git tag -a "${GIT_TAG}" "${SOURCE_SHA}" \
-            -m "${COMPONENT_ID} ${VERSION}"
-
-          git push origin "refs/tags/${GIT_TAG}"
-
-      - name: Build summary
-        shell: bash
-        env:
-          COMPONENT: ${{ matrix.component }}
-          COMPONENT_ID: ${{ steps.component.outputs.id }}
-          IMAGE: ${{ steps.component.outputs.image }}
-          VERSION: ${{ steps.version.outputs.version }}
-          GIT_TAG: ${{ steps.version.outputs.git_tag }}
-          SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
-          BUILD_BRANCH: ${{ needs.detect.outputs.branch }}
-        run: |
-          set -euo pipefail
-
           {
-            echo "## Component built and versioned"
+            echo "### ${{ matrix.service.name }}"
             echo
-            echo "| Property | Value |"
-            echo "|---|---|"
-            echo "| Source component | \`${COMPONENT}\` |"
-            echo "| Component ID | \`${COMPONENT_ID}\` |"
-            echo "| Branch | \`${BUILD_BRANCH}\` |"
-            echo "| Commit | \`${SOURCE_SHA}\` |"
-            echo "| Version | \`${VERSION}\` |"
-            echo "| Git tag | \`${GIT_TAG}\` |"
-            echo "| Versioned image | \`${IMAGE}:${VERSION}\` |"
-            echo "| Immutable image | \`${IMAGE}:sha-${SOURCE_SHA}\` |"
-          } >> "${GITHUB_STEP_SUMMARY}"
+
+            if [ "${{ steps.plan.outputs.affected }}" = "true" ]; then
+              echo "- **Artifact version:** \`${{ steps.plan.outputs.version }}\`"
+              echo "- **Build tag:** \`${{ steps.plan.outputs.build_tag }}\`"
+
+              if [ "${{ github.ref_name }}" = "main" ]; then
+                echo "- **Release tag:** \`${{ steps.plan.outputs.release_tag }}\`"
+              fi
+            else
+              echo "- **Status:** No tag created; service was not affected."
+            fi
+
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # RELEASE MANIFEST
+  # ===========================================================================
+
+  manifest:
+    name: Create environment manifest
+
+    needs:
+      - discover
+      - publish
+
+    if: needs.discover.outputs.has-services == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Refresh tags
+        run: |
+          git fetch --tags --force
+
+      - name: Download version plans
+        uses: actions/download-artifact@v4
+        with:
+          pattern: plan-*
+          path: ${{ runner.temp }}/version-plans
+          merge-multiple: true
+
+      - name: Create manifest
+        id: manifest
+        env:
+          SERVICE_MATRIX: ${{ needs.discover.outputs.matrix }}
+          ENVIRONMENT_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          GIT_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          VALIDATION_ONLY: ${{ inputs.validation-only || false }}
+        run: |
+          MANIFEST_DIR="${{ runner.temp }}/release-manifest"
+          MANIFEST_FILE="$MANIFEST_DIR/${ENVIRONMENT_NAME}-release-${RUN_NUMBER}.json"
+          REPOSITORY_LOWER="${REPOSITORY,,}"
+
+          mkdir -p "$MANIFEST_DIR"
+
+          services_json='[]'
+
+          while IFS= read -r service; do
+            slug="$(jq -r '.slug' <<< "$service")"
+            name="$(jq -r '.name' <<< "$service")"
+            csproj="$(jq -r '.csproj' <<< "$service")"
+            dockerfile="$(jq -r '.dockerfile' <<< "$service")"
+            plan_file="${{ runner.temp }}/version-plans/${slug}.env"
+
+            affected="false"
+            planned_version=""
+            planned_image_version=""
+            build_tag=""
+            release_tag=""
+
+            if [ -f "$plan_file" ]; then
+              # The plan file is generated by this workflow and contains only
+              # simple key=value output from version.ps1.
+              source "$plan_file"
+
+              planned_version="${version:-}"
+              planned_image_version="${image_version:-}"
+              build_tag="${build_tag:-}"
+              release_tag="${release_tag:-}"
+            fi
+
+            selected_version="$planned_version"
+            selected_image_version="$planned_image_version"
+            selected_git_tag="$build_tag"
+            selected_source="current-run"
+
+            if [ "$affected" = "true" ] && [ "$VALIDATION_ONLY" = "true" ]; then
+              selected_source="validation-only"
+              selected_git_tag=""
+            fi
+
+            if [ "$affected" != "true" ]; then
+              selected_source="existing-tag"
+
+              case "$ENVIRONMENT_NAME" in
+                dev)
+                  selected_git_tag="$(
+                    git tag \
+                      --list "${slug}/v*.beta.*" \
+                      --sort=-v:refname \
+                      | head -1 \
+                      || true
+                  )"
+                  ;;
+
+                qa)
+                  selected_git_tag="$(
+                    git tag \
+                      --list "${slug}/v*.rc.*" \
+                      --sort=-v:refname \
+                      | head -1 \
+                      || true
+                  )"
+                  ;;
+
+                main)
+                  selected_git_tag="$(
+                    git tag \
+                      --list "${slug}/v[0-9]*.[0-9]*.[0-9]*" \
+                      --sort=-v:refname \
+                      | grep -E "^${slug}/v[0-9]+\.[0-9]+\.[0-9]+$" \
+                      | head -1 \
+                      || true
+                  )"
+                  ;;
+              esac
+
+              if [ -n "$selected_git_tag" ]; then
+                selected_version="${selected_git_tag#${slug}/v}"
+                selected_image_version="${selected_version//+/-}"
+              else
+                selected_source="missing"
+                selected_version=""
+                selected_image_version=""
+              fi
+            fi
+
+            image="ghcr.io/${REPOSITORY_LOWER}/${slug}"
+
+            note=""
+
+            if [ "$selected_source" = "missing" ]; then
+              note="No image available for '${ENVIRONMENT_NAME}' yet. Trigger workflow_dispatch with this service listed in 'services' to build one."
+            fi
+
+            services_json="$(
+              jq \
+                --arg slug "$slug" \
+                --arg name "$name" \
+                --arg csproj "$csproj" \
+                --arg dockerfile "$dockerfile" \
+                --arg image "$image" \
+                --arg version "$selected_version" \
+                --arg image_version "$selected_image_version" \
+                --arg image_ref "${image}:${selected_image_version}" \
+                --arg git_tag "$selected_git_tag" \
+                --arg source "$selected_source" \
+                --arg affected "$affected" \
+                --arg note "$note" \
+                '. + [{
+                  slug: $slug,
+                  name: $name,
+                  csproj: $csproj,
+                  dockerfile: $dockerfile,
+                  image: $image,
+                  version: $version,
+                  image_version: $image_version,
+                  image_ref: (if $image_version == "" then "" else $image_ref end),
+                  git_tag: $git_tag,
+                  source: $source,
+                  affected: ($affected == "true"),
+                  note: $note
+                }]' \
+                <<< "$services_json"
+            )"
+          done < <(jq -c '.[]' <<< "$SERVICE_MATRIX")
+
+          missing_count="$(
+            jq '[.[] | select(.source == "missing")] | length' <<< "$services_json"
+          )"
+
+          incomplete="false"
+
+          if [ "$missing_count" -gt 0 ]; then
+            incomplete="true"
+
+            echo "::warning::${ENVIRONMENT_NAME} manifest is incomplete: ${missing_count} service(s) have no existing or newly built image tag. They are included as placeholders."
+            jq -r '.[] | select(.source == "missing") | "missing image tag for \(.slug)"' <<< "$services_json"
+          fi
+
+          jq -n \
+            --arg environment "$ENVIRONMENT_NAME" \
+            --arg repository "$REPOSITORY" \
+            --arg git_sha "$GIT_SHA" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg run_number "$RUN_NUMBER" \
+            --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg validation_only "$VALIDATION_ONLY" \
+            --arg incomplete "$incomplete" \
+            --argjson services "$services_json" \
+            '{
+              schema_version: 1,
+              environment: $environment,
+              repository: $repository,
+              git_sha: $git_sha,
+              run_id: $run_id,
+              run_number: ($run_number | tonumber),
+              validation_only: ($validation_only == "true"),
+              incomplete: ($incomplete == "true"),
+              created_at: $created_at,
+              services: $services
+            }' \
+            > "$MANIFEST_FILE"
+
+          echo "manifest_file=$MANIFEST_FILE" >> "$GITHUB_OUTPUT"
+          echo "manifest_name=$(basename "$MANIFEST_FILE")" >> "$GITHUB_OUTPUT"
+          echo "incomplete=$incomplete" >> "$GITHUB_OUTPUT"
+
+          echo "Created manifest:"
+          jq . "$MANIFEST_FILE"
+
+      - name: Upload release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest-${{ github.ref_name }}-${{ github.run_number }}
+          path: ${{ steps.manifest.outputs.manifest_file }}
+          retention-days: 30
+
+      - name: Manifest summary
+        run: |
+          {
+            echo "## Environment Release Manifest"
+            echo
+            echo "- **Environment:** \`${{ github.ref_name }}\`"
+            echo "- **Manifest:** \`${{ steps.manifest.outputs.manifest_name }}\`"
+            echo "- **Git SHA:** \`${{ github.sha }}\`"
+            echo "- **Validation only:** \`${{ inputs.validation-only || false }}\`"
+
+            if [ "${{ steps.manifest.outputs.incomplete }}" = "true" ]; then
+              echo "- **Status:** :warning: Incomplete - one or more services have no image for this environment"
+            fi
+
+            echo
+            echo "| Service | Image | Source | Note |"
+            echo "|---|---|---|---|"
+
+            jq -r \
+              '.services[] | "| `\(.slug)` | `\(.image_ref)` | `\(.source)` | \(.note) |"' \
+              "${{ steps.manifest.outputs.manifest_file }}"
+
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"

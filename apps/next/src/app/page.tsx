@@ -47,7 +47,7 @@ export default function Home() {
             {steps.map((step) => (
               <div
                 key={step.name}
-                className="flex items-center justify-between px-6 py-5 transition hover:bg-white/[0.03]"
+                className="flex items-center justify-between px-6 py-5 transition hover:bg-white/3"
               >
                 <div className="flex items-center gap-4">
                   <div
