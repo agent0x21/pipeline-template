@@ -521,9 +521,14 @@ jobs:
       # Node / React
       # -----------------------------------------------------------------------
 
+      # Uses Corepack instead of pnpm/action-setup: pnpm/action-setup installs
+      # into a shared ~/setup-pnpm dir, which races across concurrent matrix
+      # jobs on the same self-hosted runner and can fail with ENOENT.
       - name: Setup pnpm
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
-        uses: pnpm/action-setup@v4
+        run: |
+          corepack enable
+          corepack prepare --activate
 
       - name: Setup Node
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
