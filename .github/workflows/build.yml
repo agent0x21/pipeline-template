@@ -521,6 +521,14 @@ jobs:
       # Node / React
       # -----------------------------------------------------------------------
 
+      # Node must be set up before Corepack/pnpm are available on PATH, so the
+      # pnpm cache-dependency wiring for setup-node can't be used here.
+      - name: Setup Node
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.service.node_version || '24' }}
+
       # Uses Corepack instead of pnpm/action-setup: pnpm/action-setup installs
       # into a shared ~/setup-pnpm dir, which races across concurrent matrix
       # jobs on the same self-hosted runner and can fail with ENOENT.
@@ -529,14 +537,6 @@ jobs:
         run: |
           corepack enable
           corepack prepare --activate
-
-      - name: Setup Node
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ matrix.service.node_version || '24' }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Node dependencies
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
