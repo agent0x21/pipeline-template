@@ -521,12 +521,17 @@ jobs:
       # Node / React
       # -----------------------------------------------------------------------
 
+      - name: Setup pnpm
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
         uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.service.node_version || '24' }}
-          cache-dependency-path: ${{ matrix.service.path }}/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Node dependencies
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'

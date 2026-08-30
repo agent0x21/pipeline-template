@@ -21,8 +21,8 @@
       "dockerfile": "apps/express/Dockerfile",
       "docker_context": "apps/express",
       "node_version": "22",
-      "install_command": "npm install",
-      "build_command": "npm run build",
+      "install_command": "pnpm install --frozen-lockfile",
+      "build_command": "pnpm run build",
       "depends_on": [
         "apps/express"
       ]
@@ -35,8 +35,8 @@
       "dockerfile": "apps/next/Dockerfile",
       "docker_context": "apps/next",
       "node_version": "22",
-      "install_command": "npm install",
-      "build_command": "npm run build",
+      "install_command": "pnpm install --frozen-lockfile",
+      "build_command": "pnpm run build",
       "depends_on": [
         "apps/next"
       ]
@@ -49,8 +49,8 @@
       "dockerfile": "apps/react/Dockerfile",
       "docker_context": "apps/react",
       "node_version": "22",
-      "install_command": "npm install",
-      "build_command": "npm run build",
+      "install_command": "pnpm install --frozen-lockfile",
+      "build_command": "pnpm run build",
       "depends_on": [
         "apps/react"
       ]
