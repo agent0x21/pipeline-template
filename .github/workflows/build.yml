@@ -530,6 +530,15 @@ jobs:
             rm -rf -- "${stale_setup_dir}"
           fi
 
+      - name: Verify current directory
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_dir="$(pwd)"
+          test -d "${current_dir}"
+          echo "Working directory: ${current_dir}"
+
       - name: Setup pnpm
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
         uses: pnpm/action-setup@v4
