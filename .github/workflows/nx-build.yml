@@ -117,38 +117,33 @@ jobs:
           ' nx.json)"
           if [ -z "$selected" ]; then
             echo "No releasable Node projects are affected."
-            exit 0
-          fi
-          args=(--skip-publish --projects="$selected")
+          else
+            args=(--skip-publish --projects="$selected")
 
-          # Existing repositories may have legacy tags that do not match the
-          # independent Nx tag pattern. Bootstrap each app's first matching
-          # release tag so changelog generation has a valid starting point.
-          first_release=false
-          IFS=',' read -ra selected_projects <<< "$selected"
-          for project in "${selected_projects[@]}"; do
-            if ! git tag --list "${project}@*" | grep -q .; then
-              first_release=true
-              break
-            fi
-          done
-          if [ "$first_release" = "true" ]; then
-            args+=(--first-release)
+            first_release=false
+            IFS=',' read -ra selected_projects <<< "$selected"
+            for project in "${selected_projects[@]}"; do
+              if ! git tag --list "${project}@*" | grep -q .; then
+                first_release=true
+                break
+              fi
+            done
+            if [ "$first_release" = "true" ]; then args+=(--first-release); fi
+
+            case "$BRANCH" in
+              dev) args+=(--preid=beta) ;;
+              qa) args+=(--preid=rc) ;;
+            esac
+            pnpm nx release "${args[@]}"
           fi
 
-          case "$BRANCH" in
-            dev)
-              # Produces versions such as 1.2.0-beta.0 and tags such as
-              # @templates/react@1.2.0-beta.0.
-              args+=(--preid=beta)
-              ;;
-            qa)
-              # Produces versions such as 1.2.0-rc.0 and tags such as
-              # @templates/react@1.2.0-rc.0.
-              args+=(--preid=rc)
-              ;;
-          esac
-          pnpm nx release "${args[@]}"
+          if jq -e 'index("DotnetApi")' <<< "$PROJECTS" >/dev/null; then
+            pwsh -NoProfile -File .github/scripts/versioning/dotnet-version.ps1 \
+              -Project DotnetApi \
+              -ProjectFile apps/dotnet-api/DotnetApi.csproj \
+              -Branch "$BRANCH"
+          fi
+
           git push --follow-tags origin "HEAD:${GITHUB_REF_NAME}"
 
   build:
