@@ -544,6 +544,9 @@ jobs:
       - name: Setup pnpm
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
         uses: pnpm/setup@v2
+        with:
+          version: 11
+          install: false
 
       - name: Setup Node
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
