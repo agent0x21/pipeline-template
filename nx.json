@@ -24,6 +24,7 @@
     "projectsRelationship": "independent",
     "version": {
       "conventionalCommits": true,
+      "fallbackCurrentVersionResolver": "disk",
       "updateDependents": "auto",
       "applyPreidToDependents": true
     },
