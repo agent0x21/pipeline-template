@@ -543,9 +543,7 @@ jobs:
 
       - name: Setup pnpm
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.33.0
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
