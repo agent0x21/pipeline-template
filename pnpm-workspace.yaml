@@ -4,9 +4,13 @@ packages:
   - apps/express
   - apps/*
   - packages/*
-
-injectWorkspacePackages: true
+allowBuilds:
+  esbuild: true
+  nx: true
+  unrs-resolver: true
 
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver
+
+injectWorkspacePackages: true
