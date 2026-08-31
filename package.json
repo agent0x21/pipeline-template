@@ -4,18 +4,24 @@
   "description": "Template for creating a new pipelines for monorepos",
   "main": "index.js",
   "scripts": {
-    "dev:react": "pnpm --filter @templates/react dev",
-    "dev:next": "pnpm --filter @templates/next dev",
-    "dev:express": "pnpm --filter @templates/express dev",
-    "dev:dotnet": "dotnet watch --project apps/dotnet-api",
-    "build:react": "pnpm --filter @templates/react build",
-    "build:next": "pnpm --filter @templates/next build",
-    "build:express": "pnpm --filter @templates/express build",
-    "build:dotnet": "dotnet build apps/dotnet-api",
-    "build": "pnpm -r build && dotnet build apps/dotnet-api"
+    "dev:react": "nx run @templates/react:dev",
+    "dev:next": "nx run @templates/next:dev",
+    "dev:express": "nx run @templates/express:dev",
+    "dev:dotnet": "nx run DotnetApi:watch",
+    "build:react": "nx run @templates/react:build",
+    "build:next": "nx run @templates/next:build",
+    "build:express": "nx run @templates/express:build",
+    "build:dotnet": "nx run DotnetApi:build:release",
+    "build": "nx run DotnetApi:restore && nx run-many --target=build --all --configuration=release",
+    "lint": "nx run-many --target=lint --projects=@templates/react,@templates/next",
+    "typecheck": "nx run @templates/express:typecheck"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.33.0"
+  "packageManager": "pnpm@10.33.0",
+  "devDependencies": {
+    "@nx/dotnet": "23.1.2",
+    "nx": "23.1.2"
+  }
 }
