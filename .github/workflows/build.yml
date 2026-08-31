@@ -410,6 +410,10 @@ jobs:
       matrix:
         service: ${{ fromJson(needs.discover.outputs.has-services == 'true' && needs.discover.outputs.matrix || '[{"slug":"__none__"}]') }}
 
+    env:
+      # /usr/share/dotnet on the self-hosted runner may be root-owned.
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
