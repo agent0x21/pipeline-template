@@ -21,8 +21,8 @@ export default function Home() {
             </h1>
 
             <p className="mt-4 max-w-xl text-lg text-gray-400">
-              Your code is making its way through the CI/CD pipeline.
-              Hopefully nothing turns red.
+              Your code is making its way through the CI/CD pipeline. Hopefully
+              nothing turns red.
             </p>
           </div>
 
@@ -89,7 +89,7 @@ export default function Home() {
         </div>
 
         <p className="mt-10 text-center font-mono text-sm text-gray-600">
-          $ git push origin main
+          $ git push origin main!
           <span className="ml-2 animate-pulse">▌</span>
         </p>
       </div>
