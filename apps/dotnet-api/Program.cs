@@ -60,7 +60,8 @@ var users = new List<User>
 {
     new(1, "Alice", "alice@example.com"),
     new(2, "Bob", "bob@example.com"),
-    new(3, "Charlie", "charlie@example.com")
+    new(3, "Charlie", "charlie@example.com"),
+    new(4, "David", "david@example.com")
 };
 
 app.MapGet("/api/users", () =>
