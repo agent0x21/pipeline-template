@@ -89,7 +89,7 @@ export default function Home() {
         </div>
 
         <p className="mt-10 text-center font-mono text-sm text-gray-600">
-          $ git push origin main!
+          $ git push origin main
           <span className="ml-2 animate-pulse">▌</span>
         </p>
       </div>
