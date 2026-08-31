@@ -120,6 +120,22 @@ jobs:
             exit 0
           fi
           args=(--skip-publish --projects="$selected")
+
+          # Existing repositories may have legacy tags that do not match the
+          # independent Nx tag pattern. Bootstrap each app's first matching
+          # release tag so changelog generation has a valid starting point.
+          first_release=false
+          IFS=',' read -ra selected_projects <<< "$selected"
+          for project in "${selected_projects[@]}"; do
+            if ! git tag --list "${project}@*" | grep -q .; then
+              first_release=true
+              break
+            fi
+          done
+          if [ "$first_release" = "true" ]; then
+            args+=(--first-release)
+          fi
+
           case "$BRANCH" in
             dev)
               # Produces versions such as 1.2.0-beta.0 and tags such as
