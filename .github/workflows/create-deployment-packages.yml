@@ -176,7 +176,7 @@ jobs:
 
     steps:
       - name: Download source release manifest
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           pattern: ${{ needs.resolve.outputs.artifact-pattern }}
           path: ${{ runner.temp }}/source-manifest
@@ -359,7 +359,7 @@ jobs:
 
     steps:
       - name: Download source release manifest
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           pattern: ${{ needs.resolve.outputs.artifact-pattern }}
           path: ${{ runner.temp }}/source-manifest

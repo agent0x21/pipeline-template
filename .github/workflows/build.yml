@@ -382,7 +382,7 @@ jobs:
           } > "$PLAN_FILE"
 
       - name: Upload version plan
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plan-${{ matrix.service.slug }}
           path: ${{ runner.temp }}/version-plans/${{ matrix.service.slug }}.env
@@ -415,7 +415,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download version plan
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: plan-${{ matrix.service.slug }}
           path: ${{ runner.temp }}/version-plans
@@ -688,7 +688,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download version plan
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: plan-${{ matrix.service.slug }}
           path: ${{ runner.temp }}/version-plans
@@ -815,7 +815,7 @@ jobs:
           git fetch --tags --force
 
       - name: Download version plans
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: plan-*
           path: ${{ runner.temp }}/version-plans
@@ -1004,7 +1004,7 @@ jobs:
           jq . "$MANIFEST_FILE"
 
       - name: Upload release manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-manifest-${{ github.ref_name }}-${{ github.run_number }}
           path: ${{ steps.manifest.outputs.manifest_file }}
