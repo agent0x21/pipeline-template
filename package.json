@@ -22,6 +22,7 @@
   "packageManager": "pnpm@11.0.0",
   "devDependencies": {
     "@nx/dotnet": "23.1.2",
+    "@nx/js": "^23.1.2",
     "nx": "23.1.2"
   }
 }

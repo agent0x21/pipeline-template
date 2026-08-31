@@ -33,7 +33,7 @@
       "type": "node",
       "path": "apps/next",
       "dockerfile": "apps/next/Dockerfile",
-      "docker_context": "apps/next",
+      "docker_context": ".",
       "node_version": "22",
       "install_command": "pnpm install --frozen-lockfile",
       "build_command": "pnpm run build",

@@ -14,5 +14,26 @@
       "!{projectRoot}/**/bin/**/*",
       "!{projectRoot}/**/obj/**/*"
     ]
+  },
+  "release": {
+    "projects": [
+      "@templates/express",
+      "@templates/next",
+      "@templates/react"
+    ],
+    "projectsRelationship": "independent",
+    "version": {
+      "conventionalCommits": true,
+      "updateDependents": "auto",
+      "applyPreidToDependents": true
+    },
+    "changelog": {
+      "projectChangelogs": true
+    },
+    "releaseTag": {
+      "pattern": "{projectName}@{version}",
+      "requireSemver": true,
+      "strictPreid": false
+    }
   }
 }

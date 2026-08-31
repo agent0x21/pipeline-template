@@ -343,6 +343,10 @@ function Get-DockerContext {
 
     $relativeDirectory = Get-RelativePath -Path $Directory -Root $Root
 
+    if ($relativeDirectory -ceq 'apps/next') {
+        return '.'
+    }
+
     if ($relativeDirectory.StartsWith('src/', [System.StringComparison]::Ordinal)) {
         return '.'
     }
@@ -820,7 +824,7 @@ function Find-Services {
                 type            = 'node'
                 path            = Get-RelativePath -Path $directory -Root $Root
                 dockerfile      = Get-RelativePath -Path $dockerfile -Root $Root
-                docker_context  = Get-RelativePath -Path $directory -Root $Root
+                docker_context  = Get-DockerContext -Directory $directory -Root $Root
                 node_version    = $DEFAULT_NODE_VERSION
                 install_command = if (
                     [System.IO.File]::Exists(

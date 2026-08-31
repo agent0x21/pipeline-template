@@ -1,60 +1,5 @@
 name: Service Version Build
 
-# Per-service SemVer build pipeline.
-#
-# - Services are auto-discovered by .github/scripts/versioning/version.ps1:
-#   any folder under src/ containing a Dockerfile + exactly one .csproj.
-#
-# - Each service has an independent SemVer version tracked through git tags:
-#
-#     <slug>/v<major>.<minor>.<patch>
-#
-# - A service is affected when:
-#     - its own code changes
-#     - a directly referenced project changes
-#     - a transitively referenced project changes
-#
-# - Affected detection uses the current push range.
-#
-# - Version bump calculation considers all unreleased changes since the
-#   service's last canonical release.
-#
-# Version formats:
-#
-#   dev:
-#     M.N.P.beta.<buildnum>
-#
-#   qa:
-#     M.N.P.rc.<buildnum>
-#
-#   main:
-#     M.N.P+<buildnum>
-#
-# Conventional Commit behavior:
-#
-#   fix:                    -> Patch
-#   feat:                   -> Minor
-#   feat!:                  -> Major
-#   <type>!:                -> Major
-#   BREAKING CHANGE:        -> Major
-#
-# Default bump when no matching Conventional Commit exists:
-#
-#   Minor
-#
-# workflow_dispatch allows:
-#
-#   - explicitly overriding the bump type
-#   - force-building specific service slugs
-#
-# After all successful image pushes and tags, the pipeline writes one release
-# manifest for the whole environment. Deployment should consume that manifest
-# instead of selecting image tags independently per service.
-#
-# Empty service discovery is handled safely. GitHub Actions does not permit an
-# empty matrix vector, so a placeholder matrix is supplied when no services are
-# discovered. The affected jobs are then skipped through has-services=false.
-
 on:
   push:
     branches:
@@ -65,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       bump-override:
-        description: "Force a bump type (overrides commit-message detection)"
+        description: "Force .NET bump type"
         type: choice
         default: Auto
         options:
@@ -75,13 +20,19 @@ on:
           - Patch
 
       services:
-        description: "Comma-separated service slugs to force-build even if unchanged (blank = affected-only)"
+        description: "Comma-separated service slugs to force-build"
         type: string
         required: false
         default: ""
 
+      first-release:
+        description: "Treat Node projects as their first Nx release"
+        type: boolean
+        required: false
+        default: false
+
       validation-only:
-        description: "Validate workflow orchestration without NuGet restore, Docker build/push, or Git tag changes"
+        description: "Validate workflow without committing, tagging, building, or pushing"
         type: boolean
         required: false
         default: false
@@ -95,9 +46,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  NX_DAEMON: "false"
   VERSION_SCRIPT: .github/scripts/versioning/version.ps1
   NUGET_SOURCE_NAME: github
-  NUGET_SOURCE_URL:
+  NUGET_SOURCE_URL: ""
 
 defaults:
   run:
@@ -123,115 +75,59 @@ jobs:
       - name: Discover services
         id: discover
         run: |
-          echo "Repository service candidates:"
-          echo
+          set -euo pipefail
 
-          echo "Dockerfiles:"
-          find src \
-            -type f \
-            -name Dockerfile \
-            -print \
-            2>/dev/null || true
+          if [ ! -f service-catalog.json ]; then
+            echo "::error::service-catalog.json does not exist."
+            exit 1
+          fi
 
-          echo
-          echo ".NET projects:"
-          find src \
-            -type f \
-            -name '*.csproj' \
-            -print \
-            2>/dev/null || true
-
-          echo
-          echo "Running service discovery..."
-          echo
-
-          MATRIX="$(pwsh -NoProfile -File "$VERSION_SCRIPT" matrix)"
-
-          echo "Discovered service matrix:"
-          echo "$MATRIX"
-          echo
+          MATRIX="$(jq -c '.services' service-catalog.json)"
+          COUNT="$(jq '.services | length' service-catalog.json)"
 
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
-          if [ "$MATRIX" = "[]" ]; then
-            echo "has-services=false" >> "$GITHUB_OUTPUT"
-
-            echo "::warning::No services were discovered."
-            echo "::warning::A service must contain a Dockerfile and exactly one .csproj in the same directory."
-          else
+          if [ "$COUNT" -gt 0 ]; then
             echo "has-services=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-services=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Discovery summary
         run: |
           {
-            echo "## 🔎 Service Discovery"
+            echo "## Service Discovery"
             echo
 
             if [ "${{ steps.discover.outputs.has-services }}" = "true" ]; then
-              echo "> ✅ Services discovered successfully."
-              echo
-              echo "| Service | Slug | Project | Dockerfile |"
-              echo "|---|---|---|---|"
+              echo "| Service | Slug | Type | Path | Dockerfile |"
+              echo "|---|---|---|---|---|"
 
-              pwsh -NoProfile -File "$VERSION_SCRIPT" matrix \
-                | jq -r '.[] | "| `\(.name)` | `\(.slug)` | `\(.csproj)` | `\(.dockerfile)` |"'
-
-              echo
-              echo "<details>"
-              echo "<summary>Raw discovery JSON</summary>"
-              echo
-              echo '```json'
-              pwsh -NoProfile -File "$VERSION_SCRIPT" matrix | jq .
-              echo '```'
-              echo
-              echo "</details>"
+              jq -r \
+                '.services[] |
+                 "| `\(.name)` | `\(.slug)` | `\(.type)` | `\(.path)` | `\(.dockerfile)` |"' \
+                service-catalog.json
             else
-              echo "> ⚠️ No services were discovered."
-              echo
-              echo "A service must currently contain:"
-              echo
-              echo "- a \`Dockerfile\`"
-              echo "- exactly one \`.csproj\`"
-              echo "- both files in the same directory"
-              echo
-              echo "### Expected layout"
-              echo
-              echo '```text'
-              echo 'src/'
-              echo '└── TimeClock.Server.WebApi/'
-              echo '    ├── Dockerfile'
-              echo '    └── TimeClock.Server.WebApi.csproj'
-              echo '```'
+              echo "No services discovered."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ===========================================================================
-  # VERSION
+  # NX NODE RELEASE
   # ===========================================================================
 
-  version:
-    name: Version (${{ matrix.service.slug }})
-
+  release:
+    name: Release Node projects
     needs:
       - discover
 
-    # This prevents the placeholder matrix entry from actually running.
     if: needs.discover.outputs.has-services == 'true'
 
     runs-on: self-hosted
 
-    strategy:
-      fail-fast: false
-
-      # GitHub Actions rejects an empty matrix before the job-level `if` can
-      # protect it. Therefore provide a harmless placeholder when discovery
-      # returns no services.
-      matrix:
-        service: ${{ fromJson(needs.discover.outputs.has-services == 'true' && needs.discover.outputs.matrix || '[{"slug":"__none__"}]') }}
-
-    env:
-      SLUG: ${{ matrix.service.slug }}
+    outputs:
+      sha: ${{ steps.release-sha.outputs.sha }}
+      released-projects: ${{ steps.released-projects.outputs.projects }}
 
     steps:
       - name: Checkout repository
@@ -240,153 +136,203 @@ jobs:
           fetch-depth: 0
 
       - name: Refresh tags
-        run: |
-          git fetch --tags --force
+        run: git fetch --tags --force
 
-      - name: Compute version
-        id: plan
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup pnpm
+        uses: pnpm/setup@v2
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+          install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure Git
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Capture existing tags
+        run: |
+          git tag | sort > "${{ runner.temp }}/tags-before.txt"
+
+      - name: Release Node projects
+        if: inputs.validation-only != true
+        env:
+          BRANCH: ${{ github.ref_name }}
+          FIRST_RELEASE: ${{ inputs.first-release || false }}
+        run: |
+          set -euo pipefail
+
+          NODE_PROJECTS="$(
+            jq -r \
+              '.services[]
+               | select(.type == "node")
+               | .name' \
+              service-catalog.json |
+            paste -sd ',' -
+          )"
+
+          if [ -z "$NODE_PROJECTS" ]; then
+            echo "No Node projects configured."
+            exit 0
+          fi
+
           ARGS=(
-            plan
-            --slug "$SLUG"
-            --branch "${{ github.ref_name }}"
-            --bump "${{ inputs.bump-override || 'Auto' }}"
-            --buildnum "${{ github.run_number }}"
+            --skip-publish
+            --projects="$NODE_PROJECTS"
           )
 
-          # ---------------------------------------------------------------
-          # Normal push
-          #
-          # Use exactly what changed in this push to determine whether the
-          # service needs to build.
-          # ---------------------------------------------------------------
-
-          if [ "${{ github.event_name }}" = "push" ]; then
-            ARGS+=(
-              --since
-              "${{ github.event.before }}"
-            )
+          if [ "$FIRST_RELEASE" = "true" ]; then
+            ARGS+=(--first-release)
           fi
 
-          # ---------------------------------------------------------------
-          # Manual dispatch
-          #
-          # A comma-separated list can force one or more services to build.
-          #
-          # Example:
-          #
-          #   api,worker,scheduler
-          # ---------------------------------------------------------------
+          case "$BRANCH" in
+            dev)
+              ARGS+=(--preid=beta)
+              ;;
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            IFS=',' read -ra WANTED <<< "${{ inputs.services }}"
+            qa)
+              ARGS+=(--preid=rc)
+              ;;
 
-            for s in "${WANTED[@]}"; do
-              s="$(echo "$s" | xargs)"
+            main)
+              ;;
 
-              if [ -n "$s" ] && [ "$s" = "$SLUG" ]; then
-                ARGS+=(--force)
-                break
-              fi
+            *)
+              echo "::error::Unsupported branch: $BRANCH"
+              exit 1
+              ;;
+          esac
+
+          echo "Running:"
+          printf 'pnpm nx release'
+          printf ' %q' "${ARGS[@]}"
+          echo
+
+          pnpm nx release "${ARGS[@]}"
+
+      - name: Validate Node release
+        if: inputs.validation-only == true
+        env:
+          BRANCH: ${{ github.ref_name }}
+          FIRST_RELEASE: ${{ inputs.first-release || false }}
+        run: |
+          set -euo pipefail
+
+          NODE_PROJECTS="$(
+            jq -r \
+              '.services[]
+               | select(.type == "node")
+               | .name' \
+              service-catalog.json |
+            paste -sd ',' -
+          )"
+
+          if [ -z "$NODE_PROJECTS" ]; then
+            exit 0
+          fi
+
+          ARGS=(
+            --dry-run
+            --skip-publish
+            --projects="$NODE_PROJECTS"
+          )
+
+          if [ "$FIRST_RELEASE" = "true" ]; then
+            ARGS+=(--first-release)
+          fi
+
+          case "$BRANCH" in
+            dev)
+              ARGS+=(--preid=beta)
+              ;;
+
+            qa)
+              ARGS+=(--preid=rc)
+              ;;
+
+            main)
+              ;;
+
+            *)
+              echo "::error::Unsupported branch: $BRANCH"
+              exit 1
+              ;;
+          esac
+
+          pnpm nx release "${ARGS[@]}"
+
+      - name: Push release commit and tags
+        if: inputs.validation-only != true
+        run: |
+          set -euo pipefail
+
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          git tag |
+            sort |
+            comm -13 \
+              "${{ runner.temp }}/tags-before.txt" \
+              - |
+            while IFS= read -r tag; do
+              [ -n "$tag" ] || continue
+
+              echo "Pushing tag: $tag"
+              git push origin "refs/tags/$tag"
             done
-          fi
 
-          echo "Version plan command:"
-          printf ' %q' pwsh -NoProfile -File "$VERSION_SCRIPT" "${ARGS[@]}"
-          echo
-          echo
-
-          pwsh -NoProfile -File "$VERSION_SCRIPT" \
-            "${ARGS[@]}" \
-            >> "$GITHUB_OUTPUT"
-
-      - name: Show version plan
+      - name: Determine released Node projects
+        id: released-projects
         run: |
-          echo "Service:       $SLUG"
-          echo "Affected:      ${{ steps.plan.outputs.affected }}"
-          echo "Base version:  ${{ steps.plan.outputs.base_version }}"
-          echo "Bump:          ${{ steps.plan.outputs.bump }}"
-          echo "Version:       ${{ steps.plan.outputs.version }}"
-          echo "Image version: ${{ steps.plan.outputs.image_version }}"
-          echo "Change range:  ${{ steps.plan.outputs.change_range }}"
-          echo "Dependencies:  ${{ steps.plan.outputs.dep_dirs }}"
-          echo "Pending build: ${{ steps.plan.outputs.pending_build }}"
-          echo "Pending tag:   ${{ steps.plan.outputs.pending_tag }}"
+          set -euo pipefail
 
-      - name: Mark pending build
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
-        run: |
-          PENDING_TAG="${{ steps.plan.outputs.pending_tag }}"
+          PROJECTS='[]'
 
-          git config \
-            user.name \
-            "github-actions[bot]"
+          while IFS= read -r project; do
+            [ -n "$project" ] || continue
 
-          git config \
-            user.email \
-            "github-actions[bot]@users.noreply.github.com"
-
-          echo "Marking service build as pending:"
-          echo "  $PENDING_TAG"
-
-          git tag -f "$PENDING_TAG" HEAD
-          git push -f origin "refs/tags/${PENDING_TAG}"
-
-      - name: Validation pending marker
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only == true
-        run: |
-          echo "Validation-only mode is enabled."
-          echo "Would mark pending build:"
-          echo "  ${{ steps.plan.outputs.pending_tag }}"
-
-      - name: Version summary
-        run: |
-          {
-            echo "### ${{ matrix.service.name }}"
-            echo
-
-            if [ "${{ steps.plan.outputs.affected }}" = "true" ]; then
-              echo "- **Status:** Build required"
-              echo "- **Version:** \`${{ steps.plan.outputs.version }}\`"
-              echo "- **Bump:** \`${{ steps.plan.outputs.bump }}\`"
-              echo "- **Previous release:** \`${{ steps.plan.outputs.base_version }}\`"
-              echo "- **Change range:** \`${{ steps.plan.outputs.change_range }}\`"
-              echo "- **Dependencies:** \`${{ steps.plan.outputs.dep_dirs }}\`"
-              echo "- **Pending marker:** \`${{ steps.plan.outputs.pending_tag }}\`"
-            else
-              echo "- **Status:** Skipped"
-              echo "- No changes detected for this service or its dependencies."
+            if git tag \
+              --points-at HEAD \
+              --list "${project}@*" |
+              grep -q .
+            then
+              PROJECTS="$(
+                jq \
+                  --arg project "$project" \
+                  '. + [$project] | unique' \
+                  <<< "$PROJECTS"
+              )"
             fi
+          done < <(
+            jq -r \
+              '.services[]
+               | select(.type == "node")
+               | .name' \
+              service-catalog.json
+          )
 
-            echo
-          } >> "$GITHUB_STEP_SUMMARY"
+          PROJECTS="$(jq -c . <<< "$PROJECTS")"
 
-      - name: Save version plan
+          echo "projects=$PROJECTS" >> "$GITHUB_OUTPUT"
+          echo "Released projects: $PROJECTS"
+
+      - name: Capture release SHA
+        id: release-sha
         run: |
-          PLAN_DIR="${{ runner.temp }}/version-plans"
-          PLAN_FILE="$PLAN_DIR/${{ matrix.service.slug }}.env"
-
-          mkdir -p "$PLAN_DIR"
-
-          {
-            echo "affected=${{ steps.plan.outputs.affected }}"
-            echo "version=${{ steps.plan.outputs.version }}"
-            echo "image_version=${{ steps.plan.outputs.image_version }}"
-            echo "bump=${{ steps.plan.outputs.bump }}"
-            echo "base_version=${{ steps.plan.outputs.base_version }}"
-            echo "core_version=${{ steps.plan.outputs.core_version }}"
-            echo "release_tag=${{ steps.plan.outputs.release_tag }}"
-            echo "build_tag=${{ steps.plan.outputs.build_tag }}"
-            echo "pending_tag=${{ steps.plan.outputs.pending_tag }}"
-            echo "pending_build=${{ steps.plan.outputs.pending_build }}"
-          } > "$PLAN_FILE"
-
-      - name: Upload version plan
-        uses: actions/upload-artifact@v7
-        with:
-          name: plan-${{ matrix.service.slug }}
-          path: ${{ runner.temp }}/version-plans/${{ matrix.service.slug }}.env
-          retention-days: 1
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ===========================================================================
   # BUILD
@@ -397,9 +343,8 @@ jobs:
 
     needs:
       - discover
-      - version
+      - release
 
-    # Same empty-matrix protection as the version job.
     if: needs.discover.outputs.has-services == 'true'
 
     runs-on: self-hosted
@@ -408,45 +353,246 @@ jobs:
       fail-fast: false
 
       matrix:
-        service: ${{ fromJson(needs.discover.outputs.has-services == 'true' && needs.discover.outputs.matrix || '[{"slug":"__none__"}]') }}
+        service: ${{ fromJson(needs.discover.outputs.matrix) }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout release commit
         uses: actions/checkout@v6
-
-      - name: Download version plan
-        uses: actions/download-artifact@v7
         with:
-          name: plan-${{ matrix.service.slug }}
-          path: ${{ runner.temp }}/version-plans
+          ref: ${{ needs.release.outputs.sha }}
+          fetch-depth: 0
 
-      - name: Load version plan
-        id: plan
+      - name: Refresh tags
+        run: git fetch --tags --force
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: ${{ matrix.service.dotnet_version || '10.0.x' }}
+
+      - name: Setup pnpm
+        uses: pnpm/setup@v2
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+          install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.service.node_version || '24' }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # -----------------------------------------------------------------------
+      # AFFECTED DETECTION
+      # -----------------------------------------------------------------------
+
+      - name: Determine whether service is affected
+        id: affected
+        env:
+          PROJECT_NAME: ${{ matrix.service.name }}
+          SERVICE_SLUG: ${{ matrix.service.slug }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_HEAD: ${{ github.sha }}
+          FORCED_SERVICES: ${{ inputs.services || '' }}
         run: |
-          PLAN_FILE="${{ runner.temp }}/version-plans/${{ matrix.service.slug }}.env"
+          set -euo pipefail
 
-          if [ ! -f "$PLAN_FILE" ]; then
-            echo "::error::Version plan does not exist: $PLAN_FILE"
+          affected=false
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            IFS=',' read -ra SERVICES <<< "$FORCED_SERVICES"
+
+            for service in "${SERVICES[@]}"; do
+              service="$(echo "$service" | xargs)"
+
+              if [ -n "$service" ] && [ "$service" = "$SERVICE_SLUG" ]; then
+                affected=true
+                break
+              fi
+            done
+          fi
+
+          if [ "$affected" != "true" ] && [ "$EVENT_NAME" = "push" ]; then
+            BASE="$EVENT_BEFORE"
+
+            if [ -z "$BASE" ] || [[ "$BASE" =~ ^0+$ ]]; then
+              BASE="$(git rev-list --max-parents=0 "$EVENT_HEAD" | tail -1)"
+            fi
+
+            AFFECTED_PROJECTS="$(
+              pnpm nx show projects \
+                --affected \
+                --base="$BASE" \
+                --head="$EVENT_HEAD"
+            )"
+
+            echo "Affected Nx projects:"
+            echo "$AFFECTED_PROJECTS"
+
+            if grep -Fxq "$PROJECT_NAME" <<< "$AFFECTED_PROJECTS"; then
+              affected=true
+            fi
+          fi
+
+          echo "affected=$affected" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # CORE VERSION
+      # -----------------------------------------------------------------------
+
+      - name: Read Node core version
+        id: node-version
+        if: matrix.service.type == 'node'
+        env:
+          PROJECT_PATH: ${{ matrix.service.path }}
+        run: |
+          set -euo pipefail
+
+          PACKAGE_VERSION="$(
+            node -p \
+              "require('./${PROJECT_PATH}/package.json').version"
+          )"
+
+          CORE_VERSION="${PACKAGE_VERSION%%+*}"
+          CORE_VERSION="${CORE_VERSION%%-*}"
+
+          echo "package_version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "core_version=$CORE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Compute .NET core version
+        id: dotnet-version
+        if: matrix.service.type == 'dotnet'
+        env:
+          SLUG: ${{ matrix.service.slug }}
+        run: |
+          set -euo pipefail
+
+          ARGS=(
+            plan
+            --slug "$SLUG"
+            --branch "${{ github.ref_name }}"
+            --bump "${{ inputs.bump-override || 'Auto' }}"
+            --buildnum "${{ github.run_number }}"
+          )
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            ARGS+=(
+              --since
+              "${{ github.event.before }}"
+            )
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            IFS=',' read -ra WANTED <<< "${{ inputs.services }}"
+
+            for service in "${WANTED[@]}"; do
+              service="$(echo "$service" | xargs)"
+
+              if [ -n "$service" ] && [ "$service" = "$SLUG" ]; then
+                ARGS+=(--force)
+                break
+              fi
+            done
+          fi
+
+          PLAN="$(
+            pwsh \
+              -NoProfile \
+              -File "$VERSION_SCRIPT" \
+              "${ARGS[@]}"
+          )"
+
+          echo "$PLAN"
+
+          CORE_VERSION="$(
+            grep '^core_version=' <<< "$PLAN" |
+            tail -1 |
+            cut -d= -f2-
+          )"
+
+          if [ -z "$CORE_VERSION" ]; then
+            echo "::error::Could not determine .NET core version."
             exit 1
           fi
 
-          cat "$PLAN_FILE" >> "$GITHUB_OUTPUT"
-
-      - name: Build decision
-        run: |
-          if [ "${{ steps.plan.outputs.affected }}" = "true" ]; then
-            echo "Building ${{ matrix.service.slug }}"
-            echo "Version: ${{ steps.plan.outputs.version }}"
-          else
-            echo "Skipping ${{ matrix.service.slug }} - no relevant changes."
-          fi
+          echo "core_version=$CORE_VERSION" >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
-      # .NET
+      # ENVIRONMENT VERSION
+      # -----------------------------------------------------------------------
+
+      - name: Generate artifact version
+        id: version
+        env:
+          SERVICE_TYPE: ${{ matrix.service.type }}
+          SERVICE_SLUG: ${{ matrix.service.slug }}
+          NODE_CORE_VERSION: ${{ steps.node-version.outputs.core_version }}
+          DOTNET_CORE_VERSION: ${{ steps.dotnet-version.outputs.core_version }}
+          BRANCH: ${{ github.ref_name }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+
+          if [ "$SERVICE_TYPE" = "node" ]; then
+            CORE_VERSION="$NODE_CORE_VERSION"
+          else
+            CORE_VERSION="$DOTNET_CORE_VERSION"
+          fi
+
+          if [ -z "$CORE_VERSION" ]; then
+            echo "::error::Core version was not resolved."
+            exit 1
+          fi
+
+          BUILD="$(printf '%03d' "$BUILD_NUMBER")"
+
+          case "$BRANCH" in
+            dev)
+              VERSION="${CORE_VERSION}-beta+${BUILD}"
+              ;;
+
+            qa)
+              VERSION="${CORE_VERSION}-rc+${BUILD}"
+              ;;
+
+            main)
+              VERSION="${CORE_VERSION}+${BUILD}"
+              ;;
+
+            *)
+              echo "::error::Unsupported branch: $BRANCH"
+              exit 1
+              ;;
+          esac
+
+          IMAGE_VERSION="${VERSION//+/-}"
+          BUILD_TAG="${SERVICE_SLUG}/v${VERSION}"
+
+          echo "core_version=$CORE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image_version=$IMAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_tag=$BUILD_TAG" >> "$GITHUB_OUTPUT"
+
+          echo "Core version:     $CORE_VERSION"
+          echo "Artifact version: $VERSION"
+          echo "Docker version:   $IMAGE_VERSION"
+          echo "Build tag:        $BUILD_TAG"
+
+      # -----------------------------------------------------------------------
+      # NUGET
       # -----------------------------------------------------------------------
 
       - name: Configure GitHub NuGet source
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet' && env.NUGET_SOURCE_URL != ''
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only != true &&
+          matrix.service.type == 'dotnet' &&
+          env.NUGET_SOURCE_URL != ''
         run: |
           dotnet nuget remove source "$NUGET_SOURCE_NAME" \
             >/dev/null 2>&1 || true
@@ -458,37 +604,47 @@ jobs:
             --name "$NUGET_SOURCE_NAME" \
             "$NUGET_SOURCE_URL"
 
-      - name: Restore
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+      # -----------------------------------------------------------------------
+      # DOTNET BUILD
+      # -----------------------------------------------------------------------
+
+      - name: Restore .NET app
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only != true &&
+          matrix.service.type == 'dotnet'
         run: |
           pnpm nx run "${{ matrix.service.name }}:restore"
 
-      - name: Build
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+      - name: Build .NET app
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only != true &&
+          matrix.service.type == 'dotnet'
         run: |
           pnpm nx run "${{ matrix.service.name }}:build:release"
 
-      # -----------------------------------------------------------------------
-      # Tests
-      #
-      # Test projects are discovered by convention so normal developer pushes
-      # do not need manual service or test selection.
-      # -----------------------------------------------------------------------
-
-      - name: Test
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+      - name: Test .NET app
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only != true &&
+          matrix.service.type == 'dotnet'
+        env:
+          SERVICE_NAME: ${{ matrix.service.name }}
         run: |
-          SERVICE_NAME="${{ matrix.service.name }}"
+          set -euo pipefail
 
           mapfile -t TEST_PROJECTS < <(
             find . \
               -type f \
-              \( -name "${SERVICE_NAME}.Tests.csproj" \
-                 -o -name "${SERVICE_NAME}.Test.csproj" \
-                 -o -name "*${SERVICE_NAME}*Tests.csproj" \
-                 -o -name "*${SERVICE_NAME}*Test.csproj" \) \
-              -print \
-              | sort
+              \( \
+                -name "${SERVICE_NAME}.Tests.csproj" \
+                -o -name "${SERVICE_NAME}.Test.csproj" \
+                -o -name "*${SERVICE_NAME}*Tests.csproj" \
+                -o -name "*${SERVICE_NAME}*Test.csproj" \
+              \) \
+              -print |
+            sort
           )
 
           if [ "${#TEST_PROJECTS[@]}" -eq 0 ]; then
@@ -496,99 +652,75 @@ jobs:
             exit 0
           fi
 
-          for test_project in "${TEST_PROJECTS[@]}"; do
-            echo "Testing ${test_project}"
-
+          for project in "${TEST_PROJECTS[@]}"; do
             dotnet test \
-              "$test_project" \
+              "$project" \
               --configuration Release
           done
 
       # -----------------------------------------------------------------------
-      # Node / React
+      # NODE BUILD
       # -----------------------------------------------------------------------
 
-      - name: Verify current directory
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
-        shell: bash
-        working-directory: .
-        run: |
-          set -euo pipefail
-          current_dir="$(pwd)"
-          test -d "${current_dir}"
-          echo "Working directory: ${current_dir}"
-
-      - name: Setup pnpm
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
-        uses: pnpm/setup@v2
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-          install: false
-
-      - name: Setup Node
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
-        uses: actions/setup-node@v5
-        with:
-          node-version: ${{ matrix.service.node_version || '24' }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install Node dependencies
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
-        run: pnpm install --frozen-lockfile
-
       - name: Build Node app
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only != true &&
+          matrix.service.type == 'node'
         run: |
-          NX_DAEMON=false pnpm nx run "${{ matrix.service.name }}:build"
+          pnpm nx run "${{ matrix.service.name }}:build"
 
       - name: Test Node app
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node' && matrix.service.test_command != ''
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only != true &&
+          matrix.service.type == 'node' &&
+          matrix.service.test_command != ''
         working-directory: ${{ matrix.service.path }}
         run: |
           ${{ matrix.service.test_command }}
 
+      # -----------------------------------------------------------------------
+      # VALIDATION
+      # -----------------------------------------------------------------------
+
       - name: Validate build inputs
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only == true
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only == true
         env:
           GHCR_REPOSITORY: ${{ github.repository }}
         run: |
+          set -euo pipefail
+
           GHCR_IMAGE="ghcr.io/${GHCR_REPOSITORY,,}/${{ matrix.service.slug }}"
 
-          echo "Validation-only mode is enabled."
-          echo "Skipping NuGet restore, dotnet build/test, Docker build, and image push."
-          echo
-          echo "Validating expected build inputs:"
-          echo "  Type:       ${{ matrix.service.type }}"
-          echo "  Path:       ${{ matrix.service.path }}"
-          echo "  Project:    ${{ matrix.service.csproj }}"
-          echo "  Dockerfile: ${{ matrix.service.dockerfile }}"
-          echo "  Image:      ${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}"
+          echo "Type:            ${{ matrix.service.type }}"
+          echo "Path:            ${{ matrix.service.path }}"
+          echo "Dockerfile:      ${{ matrix.service.dockerfile }}"
+          echo "Artifact version:${{ steps.version.outputs.version }}"
+          echo "Image:           ${GHCR_IMAGE}:${{ steps.version.outputs.image_version }}"
 
-          if [ ! -d "${{ matrix.service.path }}" ]; then
-            echo "::error::Service path does not exist: ${{ matrix.service.path }}"
-            exit 1
-          fi
+          test -d "${{ matrix.service.path }}"
+          test -f "${{ matrix.service.dockerfile }}"
 
-          if [ "${{ matrix.service.type }}" = "dotnet" ] && [ ! -f "${{ matrix.service.csproj }}" ]; then
-            echo "::error::Project file does not exist: ${{ matrix.service.csproj }}"
-            exit 1
-          fi
-
-          if [ ! -f "${{ matrix.service.dockerfile }}" ]; then
-            echo "::error::Dockerfile does not exist: ${{ matrix.service.dockerfile }}"
-            exit 1
+          if [ "${{ matrix.service.type }}" = "dotnet" ]; then
+            test -f "${{ matrix.service.project }}"
           fi
 
       # -----------------------------------------------------------------------
-      # Docker / GHCR
+      # DOCKER
       # -----------------------------------------------------------------------
 
       - name: Docker build
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only != true
         env:
           GHCR_REPOSITORY: ${{ github.repository }}
         run: |
+          set -euo pipefail
+
           GHCR_IMAGE="ghcr.io/${GHCR_REPOSITORY,,}/${{ matrix.service.slug }}"
 
           DOCKER_ARGS=()
@@ -601,17 +733,16 @@ jobs:
             )
           fi
 
-          echo "Building:"
-          echo "  ${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}"
-
           docker build \
             "${DOCKER_ARGS[@]}" \
             -f "${{ matrix.service.dockerfile }}" \
-            -t "${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}" \
+            -t "${GHCR_IMAGE}:${{ steps.version.outputs.image_version }}" \
             "${{ matrix.service.docker_context }}"
 
       - name: Log in to GHCR
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only != true
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -619,64 +750,64 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push to GHCR
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        if: >
+          steps.affected.outputs.affected == 'true' &&
+          inputs.validation-only != true
         env:
           GHCR_REPOSITORY: ${{ github.repository }}
         run: |
           GHCR_IMAGE="ghcr.io/${GHCR_REPOSITORY,,}/${{ matrix.service.slug }}"
 
           docker push \
-            "${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}"
+            "${GHCR_IMAGE}:${{ steps.version.outputs.image_version }}"
 
       # -----------------------------------------------------------------------
-      # Optional Azure Container Registry
-      #
-      # Required repository/org configuration:
-      #
-      #   vars.ACR_REGISTRY
-      #       Example: myregistry.azurecr.io
-      #
-      #   secrets.ACR_USERNAME
-      #   secrets.ACR_PASSWORD
-      #
-      # Uncomment the following steps to enable ACR publishing.
+      # SAVE BUILD PLAN
       # -----------------------------------------------------------------------
 
-      # - name: Log in to ACR
-      #   if: steps.plan.outputs.affected == 'true'
-      #   uses: docker/login-action@v3
-      #   with:
-      #     registry: ${{ vars.ACR_REGISTRY }}
-      #     username: ${{ secrets.ACR_USERNAME }}
-      #     password: ${{ secrets.ACR_PASSWORD }}
+      - name: Save build plan
+        run: |
+          PLAN_DIR="${{ runner.temp }}/build-plans"
+          PLAN_FILE="$PLAN_DIR/${{ matrix.service.slug }}.env"
 
-      # - name: Tag image for ACR
-      #   if: steps.plan.outputs.affected == 'true'
-      #   env:
-      #     GHCR_IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.service.slug }}
-      #     ACR_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ matrix.service.slug }}
-      #   run: |
-      #     docker tag \
-      #       "${GHCR_IMAGE}:${{ steps.plan.outputs.image_version }}" \
-      #       "${ACR_IMAGE}:${{ steps.plan.outputs.image_version }}"
+          mkdir -p "$PLAN_DIR"
 
-      # - name: Push to ACR
-      #   if: steps.plan.outputs.affected == 'true'
-      #   env:
-      #     ACR_IMAGE: ${{ vars.ACR_REGISTRY }}/${{ matrix.service.slug }}
-      #   run: |
-      #     docker push \
-      #       "${ACR_IMAGE}:${{ steps.plan.outputs.image_version }}"
+          {
+            echo "affected=${{ steps.affected.outputs.affected }}"
+            echo "core_version=${{ steps.version.outputs.core_version }}"
+            echo "version=${{ steps.version.outputs.version }}"
+            echo "image_version=${{ steps.version.outputs.image_version }}"
+            echo "build_tag=${{ steps.version.outputs.build_tag }}"
+          } > "$PLAN_FILE"
+
+      - name: Upload build plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: plan-${{ matrix.service.slug }}
+          path: ${{ runner.temp }}/build-plans/${{ matrix.service.slug }}.env
+          retention-days: 1
+
+      - name: Build summary
+        run: |
+          {
+            echo "### ${{ matrix.service.name }}"
+            echo
+            echo "- **Affected:** \`${{ steps.affected.outputs.affected }}\`"
+            echo "- **Core version:** \`${{ steps.version.outputs.core_version }}\`"
+            echo "- **Artifact version:** \`${{ steps.version.outputs.version }}\`"
+            echo "- **Docker version:** \`${{ steps.version.outputs.image_version }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ===========================================================================
-  # PUBLISH / TAG
+  # ARTIFACT TAGS
   # ===========================================================================
 
   publish:
-    name: Publish tags (${{ matrix.service.slug }})
+    name: Publish artifact tag (${{ matrix.service.slug }})
 
     needs:
       - discover
+      - release
       - build
 
     if: needs.discover.outputs.has-services == 'true'
@@ -687,47 +818,44 @@ jobs:
       fail-fast: false
 
       matrix:
-        service: ${{ fromJson(needs.discover.outputs.has-services == 'true' && needs.discover.outputs.matrix || '[{"slug":"__none__"}]') }}
+        service: ${{ fromJson(needs.discover.outputs.matrix) }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout release commit
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.release.outputs.sha }}
           fetch-depth: 0
 
-      - name: Download version plan
+      - name: Refresh tags
+        run: git fetch --tags --force
+
+      - name: Download build plan
         uses: actions/download-artifact@v7
         with:
           name: plan-${{ matrix.service.slug }}
-          path: ${{ runner.temp }}/version-plans
+          path: ${{ runner.temp }}/build-plans
 
-      - name: Load version plan
+      - name: Load build plan
         id: plan
         run: |
-          PLAN_FILE="${{ runner.temp }}/version-plans/${{ matrix.service.slug }}.env"
+          PLAN_FILE="${{ runner.temp }}/build-plans/${{ matrix.service.slug }}.env"
 
-          if [ ! -f "$PLAN_FILE" ]; then
-            echo "::error::Version plan does not exist: $PLAN_FILE"
-            exit 1
-          fi
+          test -f "$PLAN_FILE"
 
           cat "$PLAN_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Tag successful artifact
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        if: >
+          steps.plan.outputs.affected == 'true' &&
+          inputs.validation-only != true
         run: |
-          git config \
-            user.name \
-            "github-actions[bot]"
+          set -euo pipefail
 
-          git config \
-            user.email \
-            "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           BUILD_TAG="${{ steps.plan.outputs.build_tag }}"
-
-          echo "Creating build tag:"
-          echo "  $BUILD_TAG"
 
           if git rev-parse "$BUILD_TAG" >/dev/null 2>&1; then
             echo "::error::Build tag already exists: $BUILD_TAG"
@@ -737,45 +865,17 @@ jobs:
           git tag "$BUILD_TAG"
           git push origin "$BUILD_TAG"
 
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            RELEASE_TAG="${{ steps.plan.outputs.release_tag }}"
+          if \
+            [ "${{ matrix.service.type }}" = "dotnet" ] &&
+            [ "${{ github.ref_name }}" = "main" ]
+          then
+            RELEASE_TAG="${{ matrix.service.name }}@${{ steps.plan.outputs.core_version }}"
 
-            echo
-            echo "Creating canonical release tag:"
-            echo "  $RELEASE_TAG"
-
-            if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
-              echo "::error::Release tag already exists: $RELEASE_TAG"
-              exit 1
+            if ! git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
+              git tag "$RELEASE_TAG"
+              git push origin "$RELEASE_TAG"
             fi
-
-            git tag "$RELEASE_TAG"
-            git push origin "$RELEASE_TAG"
           fi
-
-          PENDING_TAG="${{ steps.plan.outputs.pending_tag }}"
-
-          echo
-          echo "Clearing pending build marker:"
-          echo "  $PENDING_TAG"
-
-          git tag -d "$PENDING_TAG" >/dev/null 2>&1 || true
-          git push origin ":refs/tags/${PENDING_TAG}" >/dev/null 2>&1 || true
-
-      - name: Validate publish decision
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only == true
-        run: |
-          echo "Validation-only mode is enabled."
-          echo "Would create build tag:"
-          echo "  ${{ steps.plan.outputs.build_tag }}"
-
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            echo "Would create canonical release tag:"
-            echo "  ${{ steps.plan.outputs.release_tag }}"
-          fi
-
-          echo "Would clear pending build marker:"
-          echo "  ${{ steps.plan.outputs.pending_tag }}"
 
       - name: Publish summary
         run: |
@@ -786,15 +886,9 @@ jobs:
             if [ "${{ steps.plan.outputs.affected }}" = "true" ]; then
               echo "- **Artifact version:** \`${{ steps.plan.outputs.version }}\`"
               echo "- **Build tag:** \`${{ steps.plan.outputs.build_tag }}\`"
-
-              if [ "${{ github.ref_name }}" = "main" ]; then
-                echo "- **Release tag:** \`${{ steps.plan.outputs.release_tag }}\`"
-              fi
             else
-              echo "- **Status:** No tag created; service was not affected."
+              echo "- **Status:** No artifact published"
             fi
-
-            echo
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ===========================================================================
@@ -806,6 +900,7 @@ jobs:
 
     needs:
       - discover
+      - release
       - publish
 
     if: needs.discover.outputs.has-services == 'true'
@@ -813,20 +908,20 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Checkout repository
+      - name: Checkout release commit
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.release.outputs.sha }}
           fetch-depth: 0
 
       - name: Refresh tags
-        run: |
-          git fetch --tags --force
+        run: git fetch --tags --force
 
-      - name: Download version plans
+      - name: Download build plans
         uses: actions/download-artifact@v7
         with:
           pattern: plan-*
-          path: ${{ runner.temp }}/version-plans
+          path: ${{ runner.temp }}/build-plans
           merge-multiple: true
 
       - name: Create manifest
@@ -835,95 +930,92 @@ jobs:
           SERVICE_MATRIX: ${{ needs.discover.outputs.matrix }}
           ENVIRONMENT_NAME: ${{ github.ref_name }}
           RUN_NUMBER: ${{ github.run_number }}
-          GIT_SHA: ${{ github.sha }}
+          GIT_SHA: ${{ needs.release.outputs.sha }}
           REPOSITORY: ${{ github.repository }}
           VALIDATION_ONLY: ${{ inputs.validation-only || false }}
         run: |
+          set -euo pipefail
+
           MANIFEST_DIR="${{ runner.temp }}/release-manifest"
           MANIFEST_FILE="$MANIFEST_DIR/${ENVIRONMENT_NAME}-release-${RUN_NUMBER}.json"
-          REPOSITORY_LOWER="${REPOSITORY,,}"
 
           mkdir -p "$MANIFEST_DIR"
 
-          services_json='[]'
+          REPOSITORY_LOWER="${REPOSITORY,,}"
+          SERVICES_JSON='[]'
 
           while IFS= read -r service; do
             slug="$(jq -r '.slug' <<< "$service")"
             name="$(jq -r '.name' <<< "$service")"
-            csproj="$(jq -r '.csproj' <<< "$service")"
+            type="$(jq -r '.type' <<< "$service")"
+            path="$(jq -r '.path' <<< "$service")"
             dockerfile="$(jq -r '.dockerfile' <<< "$service")"
-            plan_file="${{ runner.temp }}/version-plans/${slug}.env"
 
-            affected="false"
-            planned_version=""
-            planned_image_version=""
-            build_tag=""
-            release_tag=""
+            PLAN_FILE="${{ runner.temp }}/build-plans/${slug}.env"
 
-            if [ -f "$plan_file" ]; then
-              # The plan file is generated by this workflow and contains only
-              # simple key=value output from version.ps1.
-              source "$plan_file"
+            affected=false
+            version=""
+            image_version=""
+            git_tag=""
+            source=""
 
-              planned_version="${version:-}"
-              planned_image_version="${image_version:-}"
-              build_tag="${build_tag:-}"
-              release_tag="${release_tag:-}"
-            fi
+            if [ -f "$PLAN_FILE" ]; then
+              source "$PLAN_FILE"
 
-            selected_version="$planned_version"
-            selected_image_version="$planned_image_version"
-            selected_git_tag="$build_tag"
-            selected_source="current-run"
-
-            if [ "$affected" = "true" ] && [ "$VALIDATION_ONLY" = "true" ]; then
-              selected_source="validation-only"
-              selected_git_tag=""
+              if [ "$affected" = "true" ]; then
+                if [ "$VALIDATION_ONLY" = "true" ]; then
+                  source="validation-only"
+                  git_tag=""
+                else
+                  source="current-run"
+                  git_tag="$build_tag"
+                fi
+              fi
             fi
 
             if [ "$affected" != "true" ]; then
-              selected_source="existing-tag"
+              source="existing-tag"
 
               case "$ENVIRONMENT_NAME" in
                 dev)
-                  selected_git_tag="$(
+                  git_tag="$(
                     git tag \
-                      --list "${slug}/v*.beta.*" \
-                      --sort=-v:refname \
-                      | head -1 \
-                      || true
+                      --list "${slug}/v*-beta+*" \
+                      --sort=-v:refname |
+                    head -1 ||
+                    true
                   )"
                   ;;
 
                 qa)
-                  selected_git_tag="$(
+                  git_tag="$(
                     git tag \
-                      --list "${slug}/v*.rc.*" \
-                      --sort=-v:refname \
-                      | head -1 \
-                      || true
+                      --list "${slug}/v*-rc+*" \
+                      --sort=-v:refname |
+                    head -1 ||
+                    true
                   )"
                   ;;
 
                 main)
-                  selected_git_tag="$(
+                  git_tag="$(
                     git tag \
-                      --list "${slug}/v[0-9]*.[0-9]*.[0-9]*" \
-                      --sort=-v:refname \
-                      | grep -E "^${slug}/v[0-9]+\.[0-9]+\.[0-9]+$" \
-                      | head -1 \
-                      || true
+                      --list "${slug}/v*+*" \
+                      --sort=-v:refname |
+                    grep -Ev -- '-(beta|rc)' |
+                    head -1 ||
+                    true
                   )"
                   ;;
               esac
 
-              if [ -n "$selected_git_tag" ]; then
-                selected_version="${selected_git_tag#${slug}/v}"
-                selected_image_version="${selected_version//+/-}"
+              if [ -n "$git_tag" ]; then
+                version="${git_tag#${slug}/v}"
+                image_version="${version//+/-}"
               else
-                selected_source="missing"
-                selected_version=""
-                selected_image_version=""
+                source="missing"
+                version=""
+                image_version=""
               fi
             fi
 
@@ -931,53 +1023,63 @@ jobs:
 
             note=""
 
-            if [ "$selected_source" = "missing" ]; then
-              note="No image available for '${ENVIRONMENT_NAME}' yet. Trigger workflow_dispatch with this service listed in 'services' to build one."
+            if [ "$source" = "missing" ]; then
+              note="No image exists for this environment."
             fi
 
-            services_json="$(
+            SERVICES_JSON="$(
               jq \
                 --arg slug "$slug" \
                 --arg name "$name" \
-                --arg csproj "$csproj" \
+                --arg type "$type" \
+                --arg path "$path" \
                 --arg dockerfile "$dockerfile" \
                 --arg image "$image" \
-                --arg version "$selected_version" \
-                --arg image_version "$selected_image_version" \
-                --arg image_ref "${image}:${selected_image_version}" \
-                --arg git_tag "$selected_git_tag" \
-                --arg source "$selected_source" \
+                --arg version "$version" \
+                --arg image_version "$image_version" \
+                --arg git_tag "$git_tag" \
+                --arg source "$source" \
                 --arg affected "$affected" \
                 --arg note "$note" \
-                '. + [{
+                '
+                . + [{
                   slug: $slug,
                   name: $name,
-                  csproj: $csproj,
+                  type: $type,
+                  path: $path,
                   dockerfile: $dockerfile,
                   image: $image,
                   version: $version,
                   image_version: $image_version,
-                  image_ref: (if $image_version == "" then "" else $image_ref end),
+                  image_ref:
+                    (
+                      if $image_version == ""
+                      then ""
+                      else ($image + ":" + $image_version)
+                      end
+                    ),
                   git_tag: $git_tag,
                   source: $source,
                   affected: ($affected == "true"),
                   note: $note
-                }]' \
-                <<< "$services_json"
+                }]
+                ' \
+                <<< "$SERVICES_JSON"
             )"
-          done < <(jq -c '.[]' <<< "$SERVICE_MATRIX")
+          done < <(
+            jq -c '.[]' <<< "$SERVICE_MATRIX"
+          )
 
-          missing_count="$(
-            jq '[.[] | select(.source == "missing")] | length' <<< "$services_json"
+          MISSING_COUNT="$(
+            jq \
+              '[.[] | select(.source == "missing")] | length' \
+              <<< "$SERVICES_JSON"
           )"
 
-          incomplete="false"
+          INCOMPLETE=false
 
-          if [ "$missing_count" -gt 0 ]; then
-            incomplete="true"
-
-            echo "::warning::${ENVIRONMENT_NAME} manifest is incomplete: ${missing_count} service(s) have no existing or newly built image tag. They are included as placeholders."
-            jq -r '.[] | select(.source == "missing") | "missing image tag for \(.slug)"' <<< "$services_json"
+          if [ "$MISSING_COUNT" -gt 0 ]; then
+            INCOMPLETE=true
           fi
 
           jq -n \
@@ -988,8 +1090,8 @@ jobs:
             --arg run_number "$RUN_NUMBER" \
             --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg validation_only "$VALIDATION_ONLY" \
-            --arg incomplete "$incomplete" \
-            --argjson services "$services_json" \
+            --arg incomplete "$INCOMPLETE" \
+            --argjson services "$SERVICES_JSON" \
             '{
               schema_version: 1,
               environment: $environment,
@@ -1006,9 +1108,8 @@ jobs:
 
           echo "manifest_file=$MANIFEST_FILE" >> "$GITHUB_OUTPUT"
           echo "manifest_name=$(basename "$MANIFEST_FILE")" >> "$GITHUB_OUTPUT"
-          echo "incomplete=$incomplete" >> "$GITHUB_OUTPUT"
+          echo "incomplete=$INCOMPLETE" >> "$GITHUB_OUTPUT"
 
-          echo "Created manifest:"
           jq . "$MANIFEST_FILE"
 
       - name: Upload release manifest
@@ -1025,20 +1126,13 @@ jobs:
             echo
             echo "- **Environment:** \`${{ github.ref_name }}\`"
             echo "- **Manifest:** \`${{ steps.manifest.outputs.manifest_name }}\`"
-            echo "- **Git SHA:** \`${{ github.sha }}\`"
-            echo "- **Validation only:** \`${{ inputs.validation-only || false }}\`"
-
-            if [ "${{ steps.manifest.outputs.incomplete }}" = "true" ]; then
-              echo "- **Status:** :warning: Incomplete - one or more services have no image for this environment"
-            fi
-
+            echo "- **Git SHA:** \`${{ needs.release.outputs.sha }}\`"
             echo
-            echo "| Service | Image | Source | Note |"
+            echo "| Service | Version | Image | Source |"
             echo "|---|---|---|---|"
 
             jq -r \
-              '.services[] | "| `\(.slug)` | `\(.image_ref)` | `\(.source)` | \(.note) |"' \
+              '.services[] |
+               "| `\(.slug)` | `\(.version)` | `\(.image_ref)` | `\(.source)` |"' \
               "${{ steps.manifest.outputs.manifest_file }}"
-
-            echo
           } >> "$GITHUB_STEP_SUMMARY"
