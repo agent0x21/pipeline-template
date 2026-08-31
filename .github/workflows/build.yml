@@ -544,9 +544,7 @@ jobs:
 
       - name: Install Node dependencies
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
-        working-directory: .
-        run: |
-          pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build Node app
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
