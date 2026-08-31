@@ -445,14 +445,8 @@ jobs:
       # .NET
       # -----------------------------------------------------------------------
 
-      - name: Setup .NET
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 10.0.x
-
       - name: Configure GitHub NuGet source
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet' && env.NUGET_SOURCE_URL != ''
         run: |
           dotnet nuget remove source "$NUGET_SOURCE_NAME" \
             >/dev/null 2>&1 || true
