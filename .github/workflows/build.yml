@@ -520,6 +520,7 @@ jobs:
       - name: Clean stale pnpm setup directory
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
         shell: bash
+        working-directory: .
         run: |
           set -euo pipefail
 
@@ -533,6 +534,7 @@ jobs:
       - name: Verify current directory
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
         shell: bash
+        working-directory: .
         run: |
           set -euo pipefail
           current_dir="$(pwd)"
@@ -555,6 +557,7 @@ jobs:
 
       - name: Install Node dependencies
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        working-directory: .
         run: |
           pnpm install --frozen-lockfile
 
