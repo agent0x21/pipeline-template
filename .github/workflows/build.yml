@@ -446,13 +446,10 @@ jobs:
       # -----------------------------------------------------------------------
 
       - name: Setup .NET
-        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: ${{ matrix.service.dotnet_version || '10.0.x' }}
-        env:
-          # /usr/share/dotnet on the self-hosted runner may be root-owned.
-          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+          dotnet-version: 10.0.x
 
       - name: Configure GitHub NuGet source
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'dotnet'
