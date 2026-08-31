@@ -1,0 +1,163 @@
+name: Nx affected build and release
+
+on:
+  pull_request:
+  push:
+    branches: [dev, qa, main]
+  workflow_dispatch:
+    inputs:
+      all:
+        description: Build and release every project
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nx-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NX_DAEMON: "false"
+  PNPM_VERSION: 11.0.0
+  NODE_VERSION: 22
+
+jobs:
+  affected:
+    name: Find affected projects
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.projects.outputs.projects }}
+      has_projects: ${{ steps.projects.outputs.has_projects }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve affected projects
+        id: projects
+        env:
+          FORCE_ALL: ${{ inputs.all || false }}
+        run: |
+          set -euo pipefail
+
+          if [ "$FORCE_ALL" = "true" ]; then
+            mapfile -t names < <(pnpm nx show projects --json | jq -r '.[]')
+          else
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              base="${{ github.event.pull_request.base.sha }}"
+              head="${{ github.event.pull_request.head.sha }}"
+            else
+              base="${{ github.event.before }}"
+              head="${{ github.sha }}"
+              if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+                base="$(git rev-list --max-parents=0 "$head" | tail -1)"
+              fi
+            fi
+            mapfile -t names < <(pnpm nx show projects --affected --base="$base" --head="$head")
+          fi
+
+          projects='[]'
+          for name in "${names[@]}"; do
+            [ -n "$name" ] || continue
+            projects="$(jq --arg name "$name" '. + [$name]' <<< "$projects")"
+          done
+          projects="$(jq -c 'unique' <<< "$projects")"
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+          if [ "$projects" = '[]' ]; then echo "has_projects=false" >> "$GITHUB_OUTPUT"; else echo "has_projects=true" >> "$GITHUB_OUTPUT"; fi
+          echo "Affected projects: $projects"
+
+  release:
+    name: Version affected apps
+    needs: affected
+    if: >-
+      github.event_name == 'push' &&
+      github.actor != 'github-actions[bot]' &&
+      needs.affected.outputs.has_projects == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Configure git
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+      - name: Version affected projects independently
+        env:
+          PROJECTS: ${{ needs.affected.outputs.projects }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          selected="$(jq -r --argjson affected "$PROJECTS" '
+            [.release.projects[] | select(. as $project | $affected | index($project))] | join(",")
+          ' nx.json)"
+          if [ -z "$selected" ]; then
+            echo "No releasable Node projects are affected."
+            exit 0
+          fi
+          args=(--skip-publish --projects="$selected")
+          case "$BRANCH" in
+            dev)
+              # Produces versions such as 1.2.0-beta.0 and tags such as
+              # @templates/react@1.2.0-beta.0.
+              args+=(--preid=beta)
+              ;;
+            qa)
+              # Produces versions such as 1.2.0-rc.0 and tags such as
+              # @templates/react@1.2.0-rc.0.
+              args+=(--preid=rc)
+              ;;
+          esac
+          pnpm nx release "${args[@]}"
+          git push --follow-tags origin "HEAD:${GITHUB_REF_NAME}"
+
+  build:
+    name: Build affected projects
+    needs: [affected, release]
+    if: >-
+      always() &&
+      needs.affected.outputs.has_projects == 'true' &&
+      (needs.release.result == 'success' || needs.release.result == 'skipped')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJson(needs.affected.outputs.projects) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build project with Nx
+        run: pnpm nx run "${{ matrix.project }}:build"
