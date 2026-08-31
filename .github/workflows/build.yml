@@ -552,7 +552,7 @@ jobs:
       - name: Build Node app
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node'
         run: |
-          pnpm nx run "${{ matrix.service.name }}:build"
+          NX_DAEMON=false pnpm nx run "${{ matrix.service.name }}:build"
 
       - name: Test Node app
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true && matrix.service.type == 'node' && matrix.service.test_command != ''
