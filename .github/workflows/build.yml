@@ -517,6 +517,19 @@ jobs:
       # Node / React
       # -----------------------------------------------------------------------
 
+      - name: Clean stale pnpm setup directory
+        if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Self-hosted runners can retain this directory after an interrupted
+          # pnpm/action-setup run. Remove only the action-owned path.
+          stale_setup_dir="${HOME}/setup-pnpm"
+          if [ -d "${stale_setup_dir}" ]; then
+            rm -rf -- "${stale_setup_dir}"
+          fi
+
       - name: Setup pnpm
         if: steps.plan.outputs.affected == 'true' && inputs.validation-only != true
         uses: pnpm/action-setup@v4
