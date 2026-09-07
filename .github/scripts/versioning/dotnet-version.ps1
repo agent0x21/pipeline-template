@@ -11,13 +11,19 @@ $lastTag = @(git tag --list $tagPattern --sort=-v:refname | Select-Object -First
 $current = '0.1.0'
 
 if ($lastTag.Count -gt 0) {
-    $current = ($lastTag[0] -replace "^$([regex]::Escape($Project))@", '') -replace '-.*$', ''
+    $current = ($lastTag[0] -replace "^$([regex]::Escape($Project))@", '')
 } else {
     $versionMatch = Select-String -Path $ProjectFile -Pattern '<Version>([^<]+)</Version>'
     if ($versionMatch) { $current = $versionMatch.Matches[0].Groups[1].Value }
 }
 
-$parts = $current.Split('.') | ForEach-Object { [int]$_ }
+# Strip any SemVer prerelease/build suffix (e.g. "-beta.1", "-rc.2", "+meta") so
+# only the numeric major.minor.patch core is parsed into integers.
+$semverMatch = [regex]::Match($current, '^(\d+)\.(\d+)\.(\d+)')
+if (-not $semverMatch.Success) {
+    throw "Unable to parse major.minor.patch from version '$current'"
+}
+$parts = @($semverMatch.Groups[1].Value, $semverMatch.Groups[2].Value, $semverMatch.Groups[3].Value) | ForEach-Object { [int]$_ }
 $range = if ($lastTag.Count -gt 0) { "$($lastTag[0])..HEAD" } else { '' }
 $commits = if ($range) { git log $range --format='%s' } else { git log --format='%s' }
 
