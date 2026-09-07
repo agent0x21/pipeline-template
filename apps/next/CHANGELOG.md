@@ -1,3 +1,13 @@
+## 0.1.2-beta.1 (2026-09-07)
+
+### 🩹 Fixes
+
+- **page:** correct punctuation in the main heading ([dcfa3d4](https://github.com/agent0x21/pipeline-template/commit/dcfa3d4))
+
+### ❤️ Thank You
+
+- agent0x21
+
 ## 0.1.2-beta.0 (2026-08-31)
 
 ### 🚀 Features
