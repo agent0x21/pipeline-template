@@ -48,7 +48,7 @@ $content = [IO.File]::ReadAllText($ProjectFile)
 if ($content -match '<Version>[^<]+</Version>') {
     $content = [regex]::Replace($content, '<Version>[^<]+</Version>', "<Version>$version</Version>", 1)
 } else {
-    $content = $content -replace '(</PropertyGroup>)', "  <Version>$version</Version>`n  `$1", 1
+    $content = [regex]::Replace($content, '(</PropertyGroup>)', "  <Version>$version</Version>`n  `$1", 1)
 }
 [IO.File]::WriteAllText($ProjectFile, $content, [Text.UTF8Encoding]::new($false))
 
