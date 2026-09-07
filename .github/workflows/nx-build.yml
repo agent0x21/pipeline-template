@@ -31,6 +31,7 @@ jobs:
     outputs:
       projects: ${{ steps.projects.outputs.projects }}
       has_projects: ${{ steps.projects.outputs.has_projects }}
+
     steps:
       - uses: actions/checkout@v7
         with:
@@ -64,21 +65,37 @@ jobs:
             else
               base="${{ github.event.before }}"
               head="${{ github.sha }}"
+
               if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
                 base="$(git rev-list --max-parents=0 "$head" | tail -1)"
               fi
             fi
-            mapfile -t names < <(pnpm nx show projects --affected --base="$base" --head="$head")
+
+            mapfile -t names < <(
+              pnpm nx show projects \
+                --affected \
+                --base="$base" \
+                --head="$head"
+            )
           fi
 
           projects='[]'
+
           for name in "${names[@]}"; do
             [ -n "$name" ] || continue
             projects="$(jq --arg name "$name" '. + [$name]' <<< "$projects")"
           done
+
           projects="$(jq -c 'unique' <<< "$projects")"
+
           echo "projects=$projects" >> "$GITHUB_OUTPUT"
-          if [ "$projects" = '[]' ]; then echo "has_projects=false" >> "$GITHUB_OUTPUT"; else echo "has_projects=true" >> "$GITHUB_OUTPUT"; fi
+
+          if [ "$projects" = '[]' ]; then
+            echo "has_projects=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_projects=true" >> "$GITHUB_OUTPUT"
+          fi
+
           echo "Affected projects: $projects"
 
   release:
@@ -94,51 +111,69 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+
       - run: pnpm install --frozen-lockfile
+
       - name: Configure git
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
       - name: Version affected projects independently
         env:
           PROJECTS: ${{ needs.affected.outputs.projects }}
           BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+
           selected="$(jq -r --argjson affected "$PROJECTS" '
             [.release.projects[] | select(. as $project | $affected | index($project))] | join(",")
           ' nx.json)"
+
           if [ -z "$selected" ]; then
             echo "No releasable Node projects are affected."
           else
             args=(--skip-publish --projects="$selected")
 
             first_release=false
+
             IFS=',' read -ra selected_projects <<< "$selected"
+
             for project in "${selected_projects[@]}"; do
               if ! git tag --list "${project}@*" | grep -q .; then
                 first_release=true
                 break
               fi
             done
-            if [ "$first_release" = "true" ]; then args+=(--first-release); fi
+
+            if [ "$first_release" = "true" ]; then
+              args+=(--first-release)
+            fi
 
             case "$BRANCH" in
-              dev) args+=(--preid=beta) ;;
-              qa) args+=(--preid=rc) ;;
+              dev)
+                args+=(--preid=beta)
+                ;;
+              qa)
+                args+=(--preid=rc)
+                ;;
             esac
+
             pnpm nx release "${args[@]}"
           fi
 
           if jq -e 'index("DotnetApi")' <<< "$PROJECTS" >/dev/null; then
-            pwsh -NoProfile -File .github/scripts/versioning/dotnet-version.ps1 \
+            pwsh -NoProfile \
+              -File .github/scripts/versioning/dotnet-version.ps1 \
               -Project DotnetApi \
               -ProjectFile apps/dotnet-api/DotnetApi.csproj \
               -Branch "$BRANCH"
@@ -158,17 +193,27 @@ jobs:
       fail-fast: false
       matrix:
         project: ${{ fromJson(needs.affected.outputs.projects) }}
+
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore .NET dependencies
+        if: matrix.project == 'DotnetApi'
+        run: dotnet restore apps/dotnet-api/DotnetApi.csproj
+
       - name: Build project with Nx
         run: pnpm nx run "${{ matrix.project }}:build"
