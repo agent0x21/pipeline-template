@@ -17,7 +17,7 @@ export default function Home() {
             </div>
 
             <h1 className="text-4xl font-bold tracking-tight sm:text-6xl">
-              Ship it. 🚀
+              Ship it! 🚀
             </h1>
 
             <p className="mt-4 max-w-xl text-lg text-gray-400">
