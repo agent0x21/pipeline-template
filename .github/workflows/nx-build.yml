@@ -27,7 +27,7 @@ env:
 jobs:
   affected:
     name: Find affected projects
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       projects: ${{ steps.projects.outputs.projects }}
       has_projects: ${{ steps.projects.outputs.has_projects }}
@@ -105,7 +105,7 @@ jobs:
       github.event_name == 'push' &&
       github.actor != 'github-actions[bot]' &&
       needs.affected.outputs.has_projects == 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7
         with:
@@ -188,7 +188,7 @@ jobs:
       always() &&
       needs.affected.outputs.has_projects == 'true' &&
       (needs.release.result == 'success' || needs.release.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     strategy:
       fail-fast: false
       matrix:
