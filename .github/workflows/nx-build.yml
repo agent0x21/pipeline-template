@@ -25,8 +25,8 @@ defaults:
 
 env:
   NX_DAEMON: "false"
-  PNPM_VERSION: 11.0.0
-  NODE_VERSION: 22
+  PNPM_VERSION: 12.3.4
+  NODE_VERSION: 24
 
 jobs:
   affected:
