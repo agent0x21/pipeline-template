@@ -1,3 +1,13 @@
+## 0.1.2-beta.3 (2026-09-08)
+
+### 🩹 Fixes
+
+- **page:** update status text to indicate ongoing progress ([e09d206](https://github.com/agent0x21/pipeline-template/commit/e09d206))
+
+### ❤️ Thank You
+
+- agent0x21
+
 ## 0.1.2-beta.2 (2026-09-08)
 
 ### 🚀 Features
