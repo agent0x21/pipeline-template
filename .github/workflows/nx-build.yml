@@ -130,11 +130,14 @@ jobs:
             echo ""
             echo "- Base: \\`$base\\`"
             echo "- Head: \\`$head\\`"
+            echo "- Base: \`$base\`"
+            echo "- Head: \`$head\`"
             echo ""
             if [ "$projects" = '[]' ]; then
               echo "No affected projects were found."
             else
               jq -r '.[] | "- \\(.)"' <<< "$projects"
+              jq -r '.[] | "- \(.)"' <<< "$projects"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -275,8 +278,10 @@ jobs:
             echo "## Release summary"
             echo ""
             echo "- Release commit: \\`$release_sha\\`"
+            echo "- Release commit: \`$release_sha\`"
             echo "- Projects to build:"
             jq -r '.[] | "  - \\(.)"' <<< "$build_projects"
+            jq -r '.[] | "  - \(.)"' <<< "$build_projects"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
@@ -354,6 +359,10 @@ jobs:
             echo "- Environment: \\`$ENVIRONMENT\\`"
             echo "- Version: \\`$deploy_version\\`"
             echo "- Commit: \\`$COMMIT_SHA\\`"
+            echo "- Project: \`$PROJECT\`"
+            echo "- Environment: \`$ENVIRONMENT\`"
+            echo "- Version: \`$deploy_version\`"
+            echo "- Commit: \`$COMMIT_SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build project with Nx
@@ -376,5 +385,8 @@ jobs:
             echo "- Project: \\`$PROJECT\\`"
             echo "- Deployment version: \\`$DEPLOY_VERSION\\`"
             echo "- Revision: \\`${GITHUB_SHA}\\`"
+            echo "- Project: \`$PROJECT\`"
+            echo "- Deployment version: \`$DEPLOY_VERSION\`"
+            echo "- Revision: \`${GITHUB_SHA}\`"
             echo "- Status: succeeded"
           } >> "$GITHUB_STEP_SUMMARY"
