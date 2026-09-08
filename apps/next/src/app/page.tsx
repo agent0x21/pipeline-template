@@ -39,7 +39,7 @@ export default function Home() {
             </div>
 
             <span className="rounded-full bg-green-400/10 px-3 py-1 text-sm font-medium text-green-400">
-              In progress
+              In progress...
             </span>
           </div>
 
