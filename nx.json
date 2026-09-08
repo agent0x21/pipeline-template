@@ -25,16 +25,18 @@
     "version": {
       "conventionalCommits": true,
       "fallbackCurrentVersionResolver": "disk",
-      "updateDependents": "auto",
+      "updateDependents": "always",
       "applyPreidToDependents": true
     },
     "changelog": {
-      "projectChangelogs": true
+      "projectChangelogs": true,
+      "automaticFromRef": true
     },
     "releaseTag": {
       "pattern": "{projectName}@{version}",
       "requireSemver": true,
-      "strictPreid": false
+      "strictPreid": false,
+      "checkAllBranchesWhen": false
     }
   }
 }
