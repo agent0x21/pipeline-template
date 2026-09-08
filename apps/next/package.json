@@ -1,6 +1,6 @@
 {
   "name": "@templates/next",
-  "version": "0.1.2-beta.3",
+  "version": "0.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
