@@ -22,7 +22,7 @@ function Invoke-Git {
     return $result
 }
 
-$repo = (Invoke-Git @('rev-parse', '--show-toplevel'))[0]
+$repo = @(Invoke-Git @('rev-parse', '--show-toplevel'))[0]
 $file = (Resolve-Path -LiteralPath $ProjectFile).Path
 $relative = [IO.Path]::GetRelativePath($repo, $file).Replace('\', '/')
 if ($relative.StartsWith('../') -or [IO.Path]::IsPathRooted($relative)) {
@@ -30,7 +30,7 @@ if ($relative.StartsWith('../') -or [IO.Path]::IsPathRooted($relative)) {
 }
 $projectRoot = $relative.Substring(0, $relative.LastIndexOf('/'))
 $pathspec = ":(top,literal)$projectRoot"
-$headSha = (Invoke-Git @('rev-parse', '--verify', "$Head^{commit}"))[0]
+$headSha = @(Invoke-Git @('rev-parse', '--verify', "$Head^{commit}"))[0]
 # Base may be the empty tree for the first push.
 $null = Invoke-Git @('rev-parse', '--verify', "$Base^{tree}")
 $changed = @(Invoke-Git @('diff', '--name-only', $Base, $headSha, '--', $pathspec))
