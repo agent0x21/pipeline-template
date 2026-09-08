@@ -143,6 +143,7 @@ jobs:
     needs: affected
     if: >-
       github.event_name == 'push' &&
+      github.ref_name == 'main' &&
       github.actor != 'github-actions[bot]'
     runs-on: self-hosted
     outputs:
@@ -315,16 +316,65 @@ jobs:
         if: matrix.project == 'DotnetApi' || matrix.project == 'dotnet-api'
         run: dotnet restore apps/dotnet-api/DotnetApi.csproj
 
+      - name: Calculate deployment version
+        id: deployment_version
+        env:
+          PROJECT: ${{ matrix.project }}
+          ENVIRONMENT: ${{ github.event_name == 'push' && github.ref_name || 'pr' }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+
+          short_sha="${COMMIT_SHA:0:7}"
+          # Release tags are created only on main. Use the latest main tag as
+          # the base and keep DEV/QA identity in the artifact version itself.
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          base_version="$(git tag --merged refs/remotes/origin/main \
+            --list "${PROJECT}@*" --sort=-v:refname | head -n 1 | sed "s#^${PROJECT}@##")"
+          if [ -z "$base_version" ]; then
+            base_version="0.1.0"
+          fi
+
+          if [ "$ENVIRONMENT" = "main" ]; then
+            deploy_version="$base_version"
+          elif [ "$ENVIRONMENT" = "dev" ]; then
+            deploy_version="${base_version%%-*}-beta.${RUN_NUMBER}+${short_sha}"
+          elif [ "$ENVIRONMENT" = "qa" ]; then
+            deploy_version="${base_version%%-*}-rc.${RUN_NUMBER}+${short_sha}"
+          else
+            deploy_version="0.0.0-pr.${RUN_NUMBER}+${short_sha}"
+          fi
+
+          echo "deploy_version=$deploy_version" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Deployment version"
+            echo ""
+            echo "- Project: \\`$PROJECT\\`"
+            echo "- Environment: \\`$ENVIRONMENT\\`"
+            echo "- Version: \\`$deploy_version\\`"
+            echo "- Commit: \\`$COMMIT_SHA\\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build project with Nx
         env:
           PROJECT: ${{ matrix.project }}
+          DEPLOY_VERSION: ${{ steps.deployment_version.outputs.deploy_version }}
         run: |
           set -euo pipefail
-          pnpm nx run "$PROJECT:build"
+          if [ "$PROJECT" = "DotnetApi" ] || [ "$PROJECT" = "dotnet-api" ]; then
+            dotnet build apps/dotnet-api/DotnetApi.csproj \
+              --no-restore \
+              -p:Version="$DEPLOY_VERSION" \
+              -p:InformationalVersion="$DEPLOY_VERSION"
+          else
+            DEPLOY_VERSION="$DEPLOY_VERSION" pnpm nx run "$PROJECT:build"
+          fi
           {
             echo "## Build summary"
             echo ""
             echo "- Project: \\`$PROJECT\\`"
+            echo "- Deployment version: \\`$DEPLOY_VERSION\\`"
             echo "- Revision: \\`${GITHUB_SHA}\\`"
             echo "- Status: succeeded"
           } >> "$GITHUB_STEP_SUMMARY"
