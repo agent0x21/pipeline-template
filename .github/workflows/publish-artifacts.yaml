@@ -1,0 +1,323 @@
+name: Publish versioned artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref or commit to build
+        required: true
+        type: string
+      environment:
+        description: Artifact environment namespace
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - production
+      storage:
+        description: Object storage provider for native artifacts
+        required: true
+        type: choice
+        options:
+          - s3
+          - azure-blob
+      component:
+        description: Component to build and publish
+        required: true
+        type: choice
+        options:
+          - react
+          - next
+          - express
+          - dotnet-api
+          - native
+      version:
+        description: SemVer 2.0 version, including prerelease/build metadata
+        required: true
+        type: string
+      native_project:
+        description: Windows .csproj path (required for native)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: publish-${{ inputs.environment }}-${{ inputs.component }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ghcr.io/agent0x21/pipeline-template
+  ARTIFACT_BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AZURE_STORAGE_ACCOUNT: ${{ vars.AZURE_STORAGE_ACCOUNT }}
+  AZURE_STORAGE_CONTAINER: ${{ vars.AZURE_STORAGE_CONTAINER }}
+
+jobs:
+  publish:
+    name: Publish ${{ inputs.component }} artifact
+    runs-on: ${{ inputs.component == 'native' && 'windows-latest' || 'self-hosted' }}
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Check native input
+        if: inputs.component == 'native' && inputs.native_project == ''
+        shell: bash
+        run: |
+          echo 'native_project is required when component is native.' >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Validate version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # SemVer 2.0.0, including optional prerelease and build metadata.
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Invalid SemVer 2.0 version: $VERSION" >&2
+            exit 1
+          fi
+          echo "Publishing $VERSION"
+
+      - name: Install pnpm
+        if: inputs.component != 'native'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.job }}
+
+      - name: Configure Node
+        if: inputs.component != 'native'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install JavaScript dependencies
+        if: inputs.component != 'native'
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up .NET
+        if: inputs.component == 'dotnet-api' || inputs.component == 'native'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Log in to GHCR
+        if: inputs.component != 'native'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calculate artifact paths
+        id: paths
+        shell: bash
+        env:
+          COMPONENT: ${{ inputs.component }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          app='pipeline-template'
+          s3_prefix="$app/$ENVIRONMENT/$COMPONENT/$VERSION"
+          # '+' is valid SemVer but not accepted by all Docker tag consumers.
+          image_version="${VERSION//+/-}"
+          echo "s3_prefix=$s3_prefix" >> "$GITHUB_OUTPUT"
+          echo "image_version=$image_version" >> "$GITHUB_OUTPUT"
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          mkdir -p work/artifacts
+          {
+            echo "## Artifact publication"
+            echo ""
+            echo "- Component: \\`$COMPONENT\\`"
+            echo "- Environment: \\`$ENVIRONMENT\\`"
+            echo "- Version: \\`$VERSION\\`"
+            echo "- Source commit: \\`$SHA\\`"
+            echo "- S3 prefix: \\`$s3_prefix\\`"
+            echo "- Storage: \\`${{ inputs.storage }}\\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build JavaScript project
+        if: inputs.component == 'react' || inputs.component == 'next' || inputs.component == 'express'
+        shell: bash
+        env:
+          COMPONENT: ${{ inputs.component }}
+          DEPLOY_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          case "$COMPONENT" in
+            react) project='@templates/react' ;;
+            next) project='@templates/next' ;;
+            express) project='@templates/express' ;;
+          esac
+          DEPLOY_VERSION="$DEPLOY_VERSION" pnpm nx run "$project:build"
+
+      - name: Build .NET API
+        if: inputs.component == 'dotnet-api'
+        shell: bash
+        env:
+          DEPLOY_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          dotnet publish apps/dotnet-api/DotnetApi.csproj \
+            --configuration Release \
+            --output work/artifacts/dotnet-api \
+            -p:Version="$DEPLOY_VERSION" \
+            -p:InformationalVersion="$DEPLOY_VERSION"
+
+      - name: Build Windows native application
+        if: inputs.component == 'native'
+        shell: pwsh
+        env:
+          NATIVE_PROJECT: ${{ inputs.native_project }}
+          DEPLOY_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet publish $env:NATIVE_PROJECT `
+            --configuration Release `
+            --output work/artifacts/native `
+            -p:Version=$env:DEPLOY_VERSION `
+            -p:InformationalVersion=$env:DEPLOY_VERSION
+
+      - name: Create native archive
+        if: inputs.component == 'native'
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Compress-Archive -Path work/artifacts/native/* `
+            -DestinationPath "work/artifacts/native-$env:VERSION.zip"
+
+      - name: Generate checksums and manifest
+        shell: bash
+        env:
+          COMPONENT: ${{ inputs.component }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          find work/artifacts -type f -not -name '*.sha256' -print0 \
+            | sort -z \
+            | xargs -0 -r sha256sum > work/artifacts/SHA256SUMS
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = 'work/artifacts';
+          const files = [];
+          function walk(dir) {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else if (entry.name !== 'manifest.json') files.push(full.replaceAll('\\', '/').replace(`${root}/`, ''));
+            }
+          }
+          walk(root);
+          const manifest = {
+            app: 'pipeline-template',
+            component: process.env.COMPONENT,
+            environment: process.env.ENVIRONMENT,
+            version: process.env.VERSION,
+            commit: process.env.SOURCE_SHA,
+            artifacts: files.sort(),
+          };
+          fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+          NODE
+
+      - name: Generate SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v syft >/dev/null 2>&1; then
+            syft dir:. -o spdx-json=work/artifacts/sbom.spdx.json
+          else
+            echo 'syft is not installed on this runner; publishing a placeholder-free artifact set.'
+          fi
+
+      - name: Build and push Docker image
+        if: inputs.component != 'native'
+        env:
+          COMPONENT: ${{ inputs.component }}
+          IMAGE_VERSION: ${{ steps.paths.outputs.image_version }}
+          CANONICAL_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$IMAGE_NAMESPACE/$COMPONENT:$IMAGE_VERSION"
+          docker build \
+            --label "org.opencontainers.image.version=$CANONICAL_VERSION" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -t "$image" \
+            "apps/$COMPONENT"
+          docker push "$image"
+          docker inspect "$image" --format '{{index .RepoDigests 0}}' | tee work/artifacts/docker-digest.txt
+
+      - name: Configure AWS credentials
+        if: inputs.component == 'native' && inputs.storage == 's3'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure Azure credentials
+        if: inputs.component == 'native' && inputs.storage == 'azure-blob'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Upload native artifacts to S3
+        if: inputs.component == 'native' && inputs.storage == 's3'
+        shell: bash
+        env:
+          PREFIX: ${{ steps.paths.outputs.s3_prefix }}
+        run: |
+          set -euo pipefail
+          aws s3 cp work/artifacts/ "s3://$ARTIFACT_BUCKET/$PREFIX/" --recursive
+          echo "- Uploaded: \\`s3://$ARTIFACT_BUCKET/$PREFIX/\\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload native artifacts to Azure Blob
+        if: inputs.component == 'native' && inputs.storage == 'azure-blob'
+        shell: bash
+        env:
+          PREFIX: ${{ steps.paths.outputs.s3_prefix }}
+        run: |
+          set -euo pipefail
+          : "${AZURE_STORAGE_ACCOUNT:?AZURE_STORAGE_ACCOUNT repository/environment variable is required}"
+          : "${AZURE_STORAGE_CONTAINER:?AZURE_STORAGE_CONTAINER repository/environment variable is required}"
+          az storage blob upload-batch \
+            --account-name "$AZURE_STORAGE_ACCOUNT" \
+            --destination "$AZURE_STORAGE_CONTAINER/$PREFIX" \
+            --source work/artifacts \
+            --auth-mode login \
+            --overwrite false
+          echo "- Uploaded: \\`https://${AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/${AZURE_STORAGE_CONTAINER}/$PREFIX/\\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish artifact summary
+        shell: bash
+        env:
+          COMPONENT: ${{ inputs.component }}
+          VERSION: ${{ inputs.version }}
+          PREFIX: ${{ steps.paths.outputs.s3_prefix }}
+        run: |
+          set -euo pipefail
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifacts were built successfully." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Checksums: \\`work/artifacts/SHA256SUMS\\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Manifest: \\`work/artifacts/manifest.json\\`" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,11 @@
+## Dry-run delete tags ## 
+
+git ls-remote --tags --refs origin \
+  | awk '{sub("refs/tags/", "", $2); print $2}' \
+  | xargs -I{} echo git push origin --delete "refs/tags/{}"
+
+## Delete Tags (10 at a time) ##
+
+git ls-remote --tags --refs origin \
+  | awk '{sub("refs/tags/", "", $2); print $2}' \
+  | xargs -P 10 -I{} git push origin --delete "refs/tags/{}"
