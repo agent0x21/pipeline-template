@@ -168,7 +168,10 @@ jobs:
           fi
 
           tags_before="$(git tag --list)"
-          args=(--skip-publish --git-push=false)
+          # `nx release` in Nx 23.1.2 does not accept the `--git-push=false`
+          # option. Publishing is already disabled by `--skip-publish`; Git
+          # push remains handled explicitly below.
+          args=(--skip-publish)
           case "$BRANCH" in
             dev) args+=(--preid=beta) ;;
             qa) args+=(--preid=rc) ;;
@@ -176,6 +179,11 @@ jobs:
           # Nx analyzes all configured release projects and propagates bumps.
           # Disk fallback in nx.json handles projects without a release tag.
           pnpm nx release "${args[@]}"
+
+          node_release_head="$(git rev-parse HEAD)"
+          node_impact="$(pnpm nx show projects --affected --base="$NX_HEAD" --head="$node_release_head" --json)"
+          PROJECTS="$(jq -cn --argjson original "$PROJECTS" --argjson released "$node_impact" '$original + $released | unique')"
+          export PROJECTS
 
           if jq -e 'index("DotnetApi")' <<< "$PROJECTS" >/dev/null; then
             # Inspect graph dependencies too, so own docs plus dependency changes
