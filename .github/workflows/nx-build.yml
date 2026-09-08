@@ -46,6 +46,10 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
+          # Keep the self-installer out of the runner user's shared home
+          # directory. A unique path prevents concurrent self-hosted jobs from
+          # modifying the same pnpm executable tree.
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.job }}
 
       - uses: actions/setup-node@v7
         with:
@@ -135,6 +139,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.job }}
 
       - uses: actions/setup-node@v7
         with:
@@ -266,6 +271,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.job }}
 
       - uses: actions/setup-node@v7
         with:
