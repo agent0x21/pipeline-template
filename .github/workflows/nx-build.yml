@@ -125,6 +125,18 @@ jobs:
           fi
 
           echo "Affected projects: $projects"
+          {
+            echo "## Affected projects"
+            echo ""
+            echo "- Base: \\`$base\\`"
+            echo "- Head: \\`$head\\`"
+            echo ""
+            if [ "$projects" = '[]' ]; then
+              echo "No affected projects were found."
+            else
+              jq -r '.[] | "- \\(.)"' <<< "$projects"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   release:
     name: Version apps independently
@@ -258,6 +270,13 @@ jobs:
           git push --atomic origin "${push_refs[@]}"
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "projects=$build_projects" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Release summary"
+            echo ""
+            echo "- Release commit: \\`$release_sha\\`"
+            echo "- Projects to build:"
+            jq -r '.[] | "  - \\(.)"' <<< "$build_projects"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build affected projects
@@ -299,4 +318,13 @@ jobs:
       - name: Build project with Nx
         env:
           PROJECT: ${{ matrix.project }}
-        run: pnpm nx run "$PROJECT:build"
+        run: |
+          set -euo pipefail
+          pnpm nx run "$PROJECT:build"
+          {
+            echo "## Build summary"
+            echo ""
+            echo "- Project: \\`$PROJECT\\`"
+            echo "- Revision: \\`${GITHUB_SHA}\\`"
+            echo "- Status: succeeded"
+          } >> "$GITHUB_STEP_SUMMARY"
