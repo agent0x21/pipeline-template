@@ -348,7 +348,7 @@ jobs:
           elif [ "$ENVIRONMENT" = "qa" ]; then
             deploy_version="${base_version%%-*}-rc.${RUN_NUMBER}+${short_sha}"
           else
-            deploy_version="0.0.0-pr.${RUN_NUMBER}+${short_sha}"
+            deploy_version="0.0.0-rc.${RUN_NUMBER}+${short_sha}"
           fi
 
           echo "deploy_version=$deploy_version" >> "$GITHUB_OUTPUT"
