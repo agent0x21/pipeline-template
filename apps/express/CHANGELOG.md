@@ -1,7 +1,8 @@
-## 3.1.0-rc.0 (2026-09-07)
+## 3.1.0-beta.0 (2026-09-08)
 
 ### 🚀 Features
 
+- **dotnet-api): add project.json for DotnetApi application feat(express:** add projectType to nx configuration in package.json chore: update packageManager version in root package.json chore: update pnpm-lock.yaml with new dependencies and structure ([3fc8d8c](https://github.com/agent0x21/pipeline-template/commit/3fc8d8c))
 - update pnpm version to 11.0.0 in package.json files and build workflow ([431ce9a](https://github.com/agent0x21/pipeline-template/commit/431ce9a))
 - add Dockerfiles and configuration for multiple services including Express, Next, and React ([7720c8f](https://github.com/agent0x21/pipeline-template/commit/7720c8f))
 

@@ -1,0 +1,8 @@
+## Dry-run Delete ##
+gh run list --limit 1000 --json databaseId --jq '.[].databaseId' \
+  | xargs -P 10 -I{} echo gh run delete "{}"
+  
+
+## Run at your own risk - Only from within the project path. ##
+gh run list --limit 1000 --json databaseId --jq '.[].databaseId' \
+  | xargs -P 10 -n 1 gh run delete

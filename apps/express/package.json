@@ -1,6 +1,9 @@
 {
   "name": "@templates/express",
-  "version": "3.1.0-rc.0",
+  "version": "0.0.0",
+  "nx": {
+    "projectType": "application"
+  },
   "description": "",
   "main": "index.js",
   "type": "module",

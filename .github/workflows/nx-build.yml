@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       all:
-        description: Build and release every project
+        description: Build every project (releases run on push only)
         required: false
         type: boolean
         default: false
@@ -17,20 +17,30 @@ permissions:
 
 concurrency:
   group: nx-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 env:
   NX_DAEMON: "false"
-  PNPM_VERSION: 11.0.0
-  NODE_VERSION: 22
+  # @nx/dotnet's isolated dependency-analysis worker is exiting before it
+  # returns the graph on this self-hosted runner. Run plugins in-process so Nx
+  # can report the underlying .NET/MSBuild error and still discover DotnetApi.
+  NX_ISOLATE_PLUGINS: "false"
+  PNPM_VERSION: 12.3.4
+  NODE_VERSION: 24
 
 jobs:
   affected:
     name: Find affected projects
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       projects: ${{ steps.projects.outputs.projects }}
       has_projects: ${{ steps.projects.outputs.has_projects }}
+      base: ${{ steps.projects.outputs.base }}
+      head: ${{ steps.projects.outputs.head }}
 
     steps:
       - uses: actions/checkout@v7
@@ -40,6 +50,10 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
+          # Keep the self-installer out of the runner user's shared home
+          # directory. A unique path prevents concurrent self-hosted jobs from
+          # modifying the same pnpm executable tree.
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.job }}
 
       - uses: actions/setup-node@v7
         with:
@@ -49,35 +63,49 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify .NET SDK for Nx project analysis
+        run: dotnet --info
+
       - name: Resolve affected projects
         id: projects
         env:
           FORCE_ALL: ${{ inputs.all || false }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          EVENT_HEAD: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          if [ "$FORCE_ALL" = "true" ]; then
-            mapfile -t names < <(pnpm nx show projects --json | jq -r '.[]')
+          # Resolve the range even when the manual all-projects option is used.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$(git merge-base "$PR_BASE" "$PR_HEAD")"
+            head="$PR_HEAD"
           else
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
-              base="${{ github.event.pull_request.base.sha }}"
-              head="${{ github.event.pull_request.head.sha }}"
-            else
-              base="${{ github.event.before }}"
-              head="${{ github.sha }}"
-
-              if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
-                base="$(git rev-list --max-parents=0 "$head" | tail -1)"
+            base="$BEFORE"
+            head="$EVENT_HEAD"
+            if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+              if [ "$EVENT_NAME" = "workflow_dispatch" ] && git rev-parse "$head^" >/dev/null 2>&1; then
+                base="$(git rev-parse "$head^")"
+              else
+                # Include initial-commit files, unlike comparing to the root commit.
+                base="$(git hash-object -t tree -w --stdin </dev/null)"
+                FORCE_ALL=true
               fi
             fi
-
-            mapfile -t names < <(
-              pnpm nx show projects \
-                --affected \
-                --base="$base" \
-                --head="$head"
-            )
           fi
+
+          if [ "$FORCE_ALL" = "true" ]; then
+            result="$(pnpm nx show projects --json)"
+          else
+            result="$(pnpm nx show projects --affected --base="$base" --head="$head" --json)"
+          fi
+          # Capture command failures before converting the output into an array.
+          names_text="$(jq -r '.[]' <<< "$result")"
+          mapfile -t names <<< "$names_text"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
 
           projects='[]'
 
@@ -97,24 +125,44 @@ jobs:
           fi
 
           echo "Affected projects: $projects"
+          {
+            echo "## Affected projects"
+            echo ""
+            echo "- Base: \\`$base\\`"
+            echo "- Head: \\`$head\\`"
+            echo "- Base: \`$base\`"
+            echo "- Head: \`$head\`"
+            echo ""
+            if [ "$projects" = '[]' ]; then
+              echo "No affected projects were found."
+            else
+              jq -r '.[] | "- \\(.)"' <<< "$projects"
+              jq -r '.[] | "- \(.)"' <<< "$projects"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   release:
-    name: Version affected apps
+    name: Version apps independently
     needs: affected
     if: >-
       github.event_name == 'push' &&
-      github.actor != 'github-actions[bot]' &&
-      needs.affected.outputs.has_projects == 'true'
-    runs-on: ubuntu-latest
+      github.ref_name == 'main' &&
+      github.actor != 'github-actions[bot]'
+    runs-on: self-hosted
+    outputs:
+      release_sha: ${{ steps.version.outputs.release_sha }}
+      projects: ${{ steps.version.outputs.projects }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ needs.affected.outputs.head }}
 
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.job }}
 
       - uses: actions/setup-node@v7
         with:
@@ -123,85 +171,143 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Verify .NET SDK for Nx project analysis
+        run: dotnet --info
+
       - name: Configure git
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
 
-      - name: Version affected projects independently
+      - name: Version projects independently
+        id: version
         env:
           PROJECTS: ${{ needs.affected.outputs.projects }}
           BRANCH: ${{ github.ref_name }}
+          NX_BASE: ${{ needs.affected.outputs.base }}
+          NX_HEAD: ${{ needs.affected.outputs.head }}
         run: |
           set -euo pipefail
 
-          selected="$(jq -r --argjson affected "$PROJECTS" '
-            [.release.projects[] | select(. as $project | $affected | index($project))] | join(",")
-          ' nx.json)"
-
-          if [ -z "$selected" ]; then
-            echo "No releasable Node projects are affected."
-          else
-            args=(--skip-publish --projects="$selected")
-
-            first_release=false
-
-            IFS=',' read -ra selected_projects <<< "$selected"
-
-            for project in "${selected_projects[@]}"; do
-              if ! git tag --list "${project}@*" | grep -q .; then
-                first_release=true
-                break
-              fi
-            done
-
-            if [ "$first_release" = "true" ]; then
-              args+=(--first-release)
-            fi
-
-            case "$BRANCH" in
-              dev)
-                args+=(--preid=beta)
-                ;;
-              qa)
-                args+=(--preid=rc)
-                ;;
-            esac
-
-            pnpm nx release "${args[@]}"
+          # Recreate an empty-tree base in this separate checkout if necessary.
+          git hash-object -t tree -w --stdin </dev/null >/dev/null
+          # Fail on a stale event rather than releasing a moving branch head.
+          git fetch origin "$BRANCH"
+          if [ "$(git rev-parse FETCH_HEAD)" != "$NX_HEAD" ]; then
+            echo "Branch advanced since this event; the newer push must release it." >&2
+            exit 1
           fi
 
-          if jq -e 'index("DotnetApi")' <<< "$PROJECTS" >/dev/null; then
+          tags_before="$(git tag --list)"
+          # `nx release` in Nx 23.1.2 does not accept the `--git-push=false`
+          # option. Publishing is already disabled by `--skip-publish`; Git
+          # push remains handled explicitly below.
+          args=(--skip-publish)
+          case "$BRANCH" in
+            dev) args+=(--preid=beta) ;;
+            qa) args+=(--preid=rc) ;;
+          esac
+          # Nx analyzes all configured release projects and propagates bumps.
+          # Disk fallback in nx.json handles projects without a release tag.
+          pnpm nx release "${args[@]}"
+
+          node_release_head="$(git rev-parse HEAD)"
+          node_impact="$(pnpm nx show projects --affected --base="$NX_HEAD" --head="$node_release_head" --json)"
+          PROJECTS="$(jq -cn --argjson original "$PROJECTS" --argjson released "$node_impact" '$original + $released | unique')"
+          export PROJECTS
+
+          if jq -e 'index("DotnetApi") or index("dotnet-api")' <<< "$PROJECTS" >/dev/null; then
+            # Inspect graph dependencies too, so own docs plus dependency changes
+            # still produce a dependency patch. Unrelated projects are excluded.
+            graph_file="$RUNNER_TEMP/nx-release-graph.json"
+            pnpm nx graph --file="$graph_file"
+            dependency_changed="$(node - "$graph_file" <<'NODE'
+          const fs = require('node:fs');
+          const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const graph = data.graph ?? data;
+          const affected = new Set(JSON.parse(process.env.PROJECTS));
+          const visited = new Set(['DotnetApi']);
+          const pending = ['DotnetApi'];
+          let changed = false;
+          while (pending.length) {
+            for (const edge of graph.dependencies[pending.pop()] ?? []) {
+              if (visited.has(edge.target)) continue;
+              visited.add(edge.target);
+              if (affected.has(edge.target)) changed = true;
+              pending.push(edge.target);
+            }
+          }
+          console.log(changed ? 'true' : 'false');
+          NODE
+            )"
+            dotnet_project="$(jq -r 'if index("DotnetApi") then "DotnetApi" elif index("dotnet-api") then "dotnet-api" else empty end' <<< "$PROJECTS")"
+            dotnet_args=(-Affected)
+            if [ "$dependency_changed" = "true" ]; then
+              dotnet_args+=(-DependencyChanged)
+            fi
             pwsh -NoProfile \
               -File .github/scripts/versioning/dotnet-version.ps1 \
-              -Project DotnetApi \
+              -Project "$dotnet_project" \
               -ProjectFile apps/dotnet-api/DotnetApi.csproj \
-              -Branch "$BRANCH"
+              -Branch "$BRANCH" \
+              -Base "$NX_BASE" \
+              -Head "$NX_HEAD" \
+              "${dotnet_args[@]}"
           fi
 
-          git push --follow-tags origin "HEAD:${GITHUB_REF_NAME}"
+          release_sha="$(git rev-parse HEAD)"
+          # Include projects affected by release metadata/dependency propagation,
+          # which can extend beyond the event's original affected set.
+          released_projects="$(pnpm nx show projects --affected --base="$NX_HEAD" --head="$release_sha" --json)"
+          build_projects="$(jq -cn --argjson original "$PROJECTS" --argjson released "$released_projects" '$original + $released | unique')"
+
+          # Push exactly the new tags, including lightweight tags Nx may create.
+          # Atomic push prevents publishing a branch without its release tags.
+          push_refs=("HEAD:refs/heads/$BRANCH")
+          tags_after="$(git tag --list)"
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            if ! grep -Fxq -- "$tag" <<< "$tags_before"; then
+              push_refs+=("refs/tags/$tag:refs/tags/$tag")
+            fi
+          done <<< "$tags_after"
+          git push --atomic origin "${push_refs[@]}"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "projects=$build_projects" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Release summary"
+            echo ""
+            echo "- Release commit: \\`$release_sha\\`"
+            echo "- Release commit: \`$release_sha\`"
+            echo "- Projects to build:"
+            jq -r '.[] | "  - \\(.)"' <<< "$build_projects"
+            jq -r '.[] | "  - \(.)"' <<< "$build_projects"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build affected projects
     needs: [affected, release]
     if: >-
       always() &&
-      needs.affected.outputs.has_projects == 'true' &&
+      needs.affected.result == 'success' &&
+      (needs.release.outputs.projects || needs.affected.outputs.projects) != '[]' &&
       (needs.release.result == 'success' || needs.release.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     strategy:
       fail-fast: false
       matrix:
-        project: ${{ fromJson(needs.affected.outputs.projects) }}
+        project: ${{ fromJson(needs.release.outputs.projects || needs.affected.outputs.projects) }}
 
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ needs.release.outputs.release_sha || github.sha }}
 
       - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
+          dest: ${{ runner.temp }}/setup-pnpm-${{ github.run_id }}-${{ github.job }}
 
       - uses: actions/setup-node@v7
         with:
@@ -212,8 +318,75 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Restore .NET dependencies
-        if: matrix.project == 'DotnetApi'
+        if: matrix.project == 'DotnetApi' || matrix.project == 'dotnet-api'
         run: dotnet restore apps/dotnet-api/DotnetApi.csproj
 
+      - name: Calculate deployment version
+        id: deployment_version
+        env:
+          PROJECT: ${{ matrix.project }}
+          ENVIRONMENT: ${{ github.event_name == 'push' && github.ref_name || 'pr' }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+
+          short_sha="${COMMIT_SHA:0:7}"
+          # Release tags are created only on main. Use the latest main tag as
+          # the base and keep DEV/QA identity in the artifact version itself.
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          base_version="$(git tag --merged refs/remotes/origin/main \
+            --list "${PROJECT}@*" --sort=-v:refname | head -n 1 | sed "s#^${PROJECT}@##")"
+          if [ -z "$base_version" ]; then
+            base_version="0.1.0"
+          fi
+
+          if [ "$ENVIRONMENT" = "main" ]; then
+            deploy_version="$base_version"
+          elif [ "$ENVIRONMENT" = "dev" ]; then
+            deploy_version="${base_version%%-*}-beta.${RUN_NUMBER}+${short_sha}"
+          elif [ "$ENVIRONMENT" = "qa" ]; then
+            deploy_version="${base_version%%-*}-rc.${RUN_NUMBER}+${short_sha}"
+          else
+            deploy_version="0.0.0-pr.${RUN_NUMBER}+${short_sha}"
+          fi
+
+          echo "deploy_version=$deploy_version" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Deployment version"
+            echo ""
+            echo "- Project: \\`$PROJECT\\`"
+            echo "- Environment: \\`$ENVIRONMENT\\`"
+            echo "- Version: \\`$deploy_version\\`"
+            echo "- Commit: \\`$COMMIT_SHA\\`"
+            echo "- Project: \`$PROJECT\`"
+            echo "- Environment: \`$ENVIRONMENT\`"
+            echo "- Version: \`$deploy_version\`"
+            echo "- Commit: \`$COMMIT_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build project with Nx
-        run: pnpm nx run "${{ matrix.project }}:build"
+        env:
+          PROJECT: ${{ matrix.project }}
+          DEPLOY_VERSION: ${{ steps.deployment_version.outputs.deploy_version }}
+        run: |
+          set -euo pipefail
+          if [ "$PROJECT" = "DotnetApi" ] || [ "$PROJECT" = "dotnet-api" ]; then
+            dotnet build apps/dotnet-api/DotnetApi.csproj \
+              --no-restore \
+              -p:Version="$DEPLOY_VERSION" \
+              -p:InformationalVersion="$DEPLOY_VERSION"
+          else
+            DEPLOY_VERSION="$DEPLOY_VERSION" pnpm nx run "$PROJECT:build"
+          fi
+          {
+            echo "## Build summary"
+            echo ""
+            echo "- Project: \\`$PROJECT\\`"
+            echo "- Deployment version: \\`$DEPLOY_VERSION\\`"
+            echo "- Revision: \\`${GITHUB_SHA}\\`"
+            echo "- Project: \`$PROJECT\`"
+            echo "- Deployment version: \`$DEPLOY_VERSION\`"
+            echo "- Revision: \`${GITHUB_SHA}\`"
+            echo "- Status: succeeded"
+          } >> "$GITHUB_STEP_SUMMARY"
