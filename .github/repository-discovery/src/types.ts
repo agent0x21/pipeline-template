@@ -25,6 +25,33 @@ export interface DiscoveryManifest {
   applications: Application[];
 }
 
+export interface DependencyGraph {
+  schemaVersion: 1;
+  generatedBy: 'polyglot-repository-discovery';
+  applications: Application[];
+  /** Directed edges: application or package node -> the nodes it consumes. */
+  dependencies: Record<string, string[]>;
+  /** Repository-relative directory ownership, used to map changed files to nodes. */
+  owners: Record<string, string>;
+}
+
+export type AffectReason = 'direct-file-change' | 'dependency-change';
+
+export interface AffectedApplication {
+  id: string;
+  reason: AffectReason;
+  changedFiles: string[];
+}
+
+export interface AffectedManifest {
+  schemaVersion: 1;
+  generatedBy: 'polyglot-repository-discovery';
+  base: string;
+  head: string;
+  changedFiles: string[];
+  affectedApplications: AffectedApplication[];
+}
+
 export interface DetectorContext {
   root: string;
   files: string[];

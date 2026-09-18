@@ -4,16 +4,16 @@ import type { Detector, DiscoveryManifest } from './types.js';
 import { DotnetDetector } from './detectors/dotnet.js';
 import { ReactDetector } from './detectors/react.js';
 
-function walk(root: string, current = root): string[] {
+export function listFiles(root: string, current = root): string[] {
   return fs.readdirSync(current, { withFileTypes: true }).flatMap((entry) => {
     if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') return [];
     const full = path.join(current, entry.name);
-    return entry.isDirectory() ? walk(root, full) : [full];
+    return entry.isDirectory() ? listFiles(root, full) : [full];
   });
 }
 
 export function discover(root: string, detectors: Detector[] = [new ReactDetector(), new DotnetDetector()]): DiscoveryManifest {
-  const context = { root: path.resolve(root), files: walk(path.resolve(root)) };
+  const context = { root: path.resolve(root), files: listFiles(path.resolve(root)) };
   const applications = detectors.flatMap((detector) => detector.detect(context)).sort((a, b) => a.id.localeCompare(b.id));
   return { schemaVersion: 1, generatedBy: 'polyglot-repository-discovery', applications };
 }

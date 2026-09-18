@@ -9,7 +9,12 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Required only for the push-only affected-application comparison below.
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6
+        with:
+          version: 9
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -20,7 +25,16 @@ jobs:
         run: pnpm discover . --output discovery-manifest.json
       - name: Publish discovered applications to the job summary
         run: pnpm exec tsx .github/repository-discovery/src/summary-cli.ts discovery-manifest.json
+      - name: Discover applications affected by this push
+        if: ${{ github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000' }}
+        run: pnpm affected --base "${{ github.event.before }}" --head "${{ github.sha }}" --output affected-manifest.json
       - uses: actions/upload-artifact@v7
         with:
           name: discovery-manifest
           path: discovery-manifest.json
+      - name: Upload affected-applications manifest
+        if: ${{ github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: affected-applications-manifest
+          path: affected-manifest.json

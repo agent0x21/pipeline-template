@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p .github/repository-discovery/tsconfig.json",
     "discover": "tsx .github/repository-discovery/src/cli.ts",
+    "affected": "tsx .github/repository-discovery/src/affected-cli.ts",
     "summary": "tsx .github/repository-discovery/src/summary-cli.ts",
     "test": "vitest run .github/repository-discovery/tests"
   },
