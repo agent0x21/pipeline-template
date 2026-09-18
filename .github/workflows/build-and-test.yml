@@ -50,7 +50,7 @@ jobs:
     name: Build and test (${{ matrix.name }})
     needs: prepare
     if: ${{ needs.prepare.outputs.has_affected == 'true' }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: self-hosted
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
