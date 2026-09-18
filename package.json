@@ -18,6 +18,5 @@
       "onFail": "download"
     }
   },
-  "packageManager": "pnpm@12.3.4",
   "type": "module"
 }
