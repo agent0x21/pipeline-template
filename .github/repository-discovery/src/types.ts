@@ -35,7 +35,7 @@ export interface DependencyGraph {
   owners: Record<string, string>;
 }
 
-export type AffectReason = 'direct-file-change' | 'dependency-change';
+export type AffectReason = 'direct-file-change' | 'dependency-change' | 'full-validation';
 
 export interface AffectedApplication {
   id: string;

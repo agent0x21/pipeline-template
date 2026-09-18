@@ -1,0 +1,90 @@
+name: Build and test affected applications
+
+on:
+  workflow_run:
+    workflows: [Repository discovery]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare affected build matrix
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: self-hosted
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      has_affected: ${{ steps.matrix.outputs.has_affected }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: pnpm install --no-frozen-lockfile
+      - name: Download discovery manifests from the triggering run
+        uses: actions/download-artifact@v7
+        with:
+          name: discovery-manifest
+          path: .pipeline-artifacts
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Download affected-applications manifest from the triggering run
+        uses: actions/download-artifact@v7
+        with:
+          name: affected-applications-manifest
+          path: .pipeline-artifacts
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Create build-and-test matrix
+        id: matrix
+        run: pnpm build-matrix --affected .pipeline-artifacts/affected-manifest.json --discovery .pipeline-artifacts/discovery-manifest.json
+
+  build-and-test:
+    name: Build and test (${{ matrix.name }})
+    needs: prepare
+    if: ${{ needs.prepare.outputs.has_affected == 'true' }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: pnpm/action-setup@v6
+        if: ${{ matrix.ecosystem == 'node' }}
+        with:
+          version: 9
+      - uses: actions/setup-node@v7
+        if: ${{ matrix.ecosystem == 'node' }}
+        with:
+          node-version: 24
+      - uses: actions/setup-dotnet@v4
+        if: ${{ matrix.ecosystem == 'dotnet' }}
+      - uses: microsoft/setup-msbuild@v2
+        if: ${{ matrix.projectSystem == 'legacy-msbuild' }}
+      - name: Install Node dependencies
+        if: ${{ matrix.ecosystem == 'node' }}
+        run: pnpm install --no-frozen-lockfile
+      - name: Build Node application
+        if: ${{ matrix.ecosystem == 'node' }}
+        run: pnpm --dir "${{ matrix.path }}" run --if-present build
+      - name: Test Node application
+        if: ${{ matrix.ecosystem == 'node' }}
+        run: pnpm --dir "${{ matrix.path }}" run --if-present test
+      - name: Build modern .NET application
+        if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'sdk-style' }}
+        run: dotnet build "${{ matrix.projectFile }}" --configuration Release
+      - name: Test modern .NET application
+        if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'sdk-style' }}
+        run: dotnet test "${{ matrix.projectFile }}" --configuration Release --no-build
+      - name: Build legacy .NET application
+        if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'legacy-msbuild' }}
+        run: msbuild "${{ matrix.projectFile }}" /t:Build /p:Configuration=Release
