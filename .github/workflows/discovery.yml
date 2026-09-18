@@ -19,7 +19,7 @@ jobs:
         id: discovery
         run: pnpm discover . --output discovery-manifest.json
       - name: Publish discovered applications to the job summary
-        run: pnpm summary discovery-manifest.json
+        run: pnpm exec tsx .github/repository-discovery/src/summary-cli.ts discovery-manifest.json
       - uses: actions/upload-artifact@v7
         with:
           name: discovery-manifest
