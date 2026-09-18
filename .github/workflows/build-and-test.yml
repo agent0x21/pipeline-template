@@ -44,7 +44,7 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
       - name: Create build-and-test matrix
         id: matrix
-        run: pnpm build-matrix --affected .pipeline-artifacts/affected-manifest.json --discovery .pipeline-artifacts/discovery-manifest.json
+        run: pnpm exec tsx .github/repository-discovery/src/build-matrix-cli.ts --affected .pipeline-artifacts/affected-manifest.json --discovery .pipeline-artifacts/discovery-manifest.json
 
   build-and-test:
     name: Build and test (${{ matrix.name }})
@@ -88,3 +88,21 @@ jobs:
       - name: Build legacy .NET application
         if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'legacy-msbuild' }}
         run: msbuild "${{ matrix.projectFile }}" /t:Build /p:Configuration=Release
+      - name: Add build and test summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "## Build and test: ${{ matrix.name }}"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Result | **${{ job.status }}** |"
+            echo "| Path | ${{ matrix.path }} |"
+            echo "| Ecosystem | ${{ matrix.ecosystem }} |"
+            echo "| Runner | ${{ matrix.runner }} |"
+            if ($env:PROJECT_FILE) {
+              echo "| Project file | $env:PROJECT_FILE |"
+            }
+          } >> $env:GITHUB_STEP_SUMMARY
+        env:
+          PROJECT_FILE: ${{ matrix.projectFile }}
