@@ -1,0 +1,13 @@
+.git
+.github
+.agents
+.codex
+node_modules
+**/node_modules
+**/bin
+**/obj
+artifacts
+.release-output
+apps/web/dist
+release-plan.json
+promotion-plan.json

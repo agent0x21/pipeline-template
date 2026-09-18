@@ -1,0 +1,46 @@
+{
+  "name": "pipeline-template-2",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev-web": "pnpm --filter ./apps/web dev",
+    "build-web": "pnpm --filter ./apps/web build",
+    "serve-web": "pnpm dlx serve apps/web/dist",
+    "build-api": "dotnet build ./apps/api",
+    "start-api": "dotnet run --project ./apps/api --launch-profile http",
+    "release-plan": "pwsh ./eng/ci/New-ReleasePlan.ps1",
+    "release-package": "pwsh ./eng/ci/Invoke-ReleasePackage.ps1 -PlanPath ./release-plan.json",
+    "release-tags": "pwsh ./eng/ci/New-ReleaseTags.ps1 -PlanPath ./release-plan.json",
+    "release-manifest": "pwsh ./eng/ci/New-ReleaseManifest.ps1",
+    "dev-build": "pwsh ./eng/ci/Invoke-DevelopmentBuild.ps1",
+    "verify-candidate": "pwsh ./eng/ci/Assert-CandidateCommit.ps1",
+    "promotion-plan": "pwsh ./eng/ci/New-ManifestPromotionPlan.ps1",
+    "promote-artifact": "pwsh ./eng/ci/Invoke-ArtifactPromotion.ps1",
+    "assert-no-build": "pwsh ./eng/ci/Assert-NoApplicationBuild.ps1",
+    "registry-plan": "pwsh ./eng/ci/New-RegistryPublicationPlan.ps1",
+    "registry-publish": "pwsh ./eng/ci/Publish-RegistryArtifacts.ps1",
+    "github-release-assets": "pwsh ./eng/ci/providers/github/Publish-GitHubReleaseAssets.ps1",
+    "test-container-api": "pwsh ./eng/ci/Test-ApiContainer.ps1",
+    "github-governance": "pwsh ./eng/ci/providers/github/Set-GitHubReleaseGovernance.ps1",
+    "test-ci": "pwsh ./eng/ci/Invoke-ReleasePipelineTests.ps1",
+    "test-ci-legacy": "pwsh ./eng/ci/Test-LegacyMSBuildFixture.ps1",
+    "build": "pnpm build-web && dotnet build ./apps/api",
+    "prepare-release": "pwsh ./eng/ci/providers/github/Invoke-ReleaseHandoff.ps1",
+    "legacy-qa-approve": "pwsh ./eng/ci/New-QaApprovalRecord.ps1",
+    "legacy-deploy-environment": "pwsh ./eng/ci/Invoke-EnvironmentDeployment.ps1",
+    "legacy-promotion-plan-from-provenance": "pwsh ./eng/ci/New-ArtifactPromotionPlan.ps1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.3.4",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.3.4",
+  "type": "module"
+}
