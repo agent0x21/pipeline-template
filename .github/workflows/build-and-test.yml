@@ -88,21 +88,26 @@ jobs:
       - name: Build legacy .NET application
         if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'legacy-msbuild' }}
         run: msbuild "${{ matrix.projectFile }}" /t:Build /p:Configuration=Release
-      - name: Add build and test summary
+      - name: Publish build and test result
         if: ${{ always() }}
-        run: |
-          {
-            echo "## Build and test: ${{ matrix.name }}"
-            echo ""
-            echo "| Field | Value |"
-            echo "| --- | --- |"
-            echo "| Result | **${{ job.status }}** |"
-            echo "| Path | ${{ matrix.path }} |"
-            echo "| Ecosystem | ${{ matrix.ecosystem }} |"
-            echo "| Runner | ${{ matrix.runner }} |"
-            if ($env:PROJECT_FILE) {
-              echo "| Project file | $env:PROJECT_FILE |"
-            }
-          } >> $env:GITHUB_STEP_SUMMARY
+        shell: pwsh
         env:
+          RESULT: ${{ job.status }}
+          APPLICATION_NAME: ${{ matrix.name }}
+          APPLICATION_PATH: ${{ matrix.path }}
+          ECOSYSTEM: ${{ matrix.ecosystem }}
+          RUNNER: ${{ matrix.runner }}
           PROJECT_FILE: ${{ matrix.projectFile }}
+        run: |
+          $lines = @(
+            "## Build and test: $env:APPLICATION_NAME",
+            '',
+            '| Field | Value |',
+            '| --- | --- |',
+            "| Result | **$env:RESULT** |",
+            "| Path | $env:APPLICATION_PATH |",
+            "| Ecosystem | $env:ECOSYSTEM |",
+            "| Runner | $env:RUNNER |"
+          )
+          if ($env:PROJECT_FILE) { $lines += "| Project file | $env:PROJECT_FILE |" }
+          $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
