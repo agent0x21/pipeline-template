@@ -1,9 +1,16 @@
 name: Build and test affected applications
 
 on:
-  workflow_run:
-    workflows: [Repository discovery]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Commit SHA discovered by the upstream workflow
+        required: true
+        type: string
+      discovery_run_id:
+        description: Repository discovery workflow run ID
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -12,7 +19,6 @@ permissions:
 jobs:
   prepare:
     name: Prepare affected build matrix
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: self-hosted
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -20,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.source_sha }}
       - uses: pnpm/action-setup@v6
         with:
           version: 9
@@ -34,14 +40,14 @@ jobs:
           name: discovery-manifest
           path: .pipeline-artifacts
           github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ inputs.discovery_run_id }}
       - name: Download affected-applications manifest from the triggering run
         uses: actions/download-artifact@v7
         with:
           name: affected-applications-manifest
           path: .pipeline-artifacts
           github-token: ${{ github.token }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ inputs.discovery_run_id }}
       - name: Create build-and-test matrix
         id: matrix
         run: pnpm exec tsx .github/repository-discovery/src/build-matrix-cli.ts --affected .pipeline-artifacts/affected-manifest.json --discovery .pipeline-artifacts/discovery-manifest.json
@@ -50,14 +56,14 @@ jobs:
     name: Build and test (${{ matrix.name }})
     needs: prepare
     if: ${{ needs.prepare.outputs.has_affected == 'true' }}
-    runs-on: self-hosted
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ inputs.source_sha }}
       - uses: pnpm/action-setup@v6
         if: ${{ matrix.ecosystem == 'node' }}
         with:

@@ -5,7 +5,7 @@ on:
   push:
 
 permissions:
-  actions: read
+  actions: write
   contents: read
 
 jobs:
@@ -52,3 +52,7 @@ jobs:
         with:
           name: affected-applications-manifest
           path: affected-manifest.json
+      - name: Start build and test when applications are affected
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm exec tsx .github/repository-discovery/src/dispatch-build-cli.ts --affected affected-manifest.json --repository "${{ github.repository }}" --ref "${{ github.ref_name }}" --source-sha "${{ github.sha }}" --discovery-run-id "${{ github.run_id }}" --workflow "build-and-test.yml"
