@@ -11,11 +11,6 @@
   <Folder Name="/repository-discovery/tests/fixtures/" />
   <Folder Name="/repository-discovery/tests/fixtures/monorepo/" />
   <Folder Name="/repository-discovery/tests/fixtures/monorepo/src/" />
-  <Folder Name="/repository-discovery/tests/fixtures/monorepo/src/api/">
-    <Project Path=".github/repository-discovery/tests/fixtures/monorepo/src/api/Orders.Api/Orders.Api.csproj" />
-  </Folder>
-  <Folder Name="/repository-discovery/tests/fixtures/monorepo/src/desktop/">
-    <Project Path=".github/repository-discovery/tests/fixtures/monorepo/src/desktop/Admin.WinForms/Admin.WinForms.csproj" />
-    <Project Path=".github/repository-discovery/tests/fixtures/monorepo/src/desktop/Admin.Wpf/Admin.Wpf.csproj" />
-  </Folder>
+  <Folder Name="/repository-discovery/tests/fixtures/monorepo/src/api/" />
+  <Folder Name="/repository-discovery/tests/fixtures/monorepo/src/desktop/" />
 </Solution>
