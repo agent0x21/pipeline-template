@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   push:
 
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   discover:
     runs-on: self-hosted
@@ -25,11 +29,17 @@ jobs:
         run: pnpm discover . --output discovery-manifest.json
       - name: Publish discovered applications to the job summary
         run: pnpm exec tsx .github/repository-discovery/src/summary-cli.ts discovery-manifest.json
-      - name: Discover applications affected by this push
-        if: ${{ github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000' }}
-        run: pnpm affected --base "${{ github.event.before }}" --head "${{ github.sha }}" --output affected-manifest.json
+      - name: Resolve last successful build-and-test baseline
+        id: baseline
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm resolve-baseline --repository "${{ github.repository }}" --branch "${{ github.ref_name }}" --head "${{ github.sha }}" --workflow ".github/workflows/build-and-test.yml"
+      - name: Discover applications affected since the validated baseline
+        if: ${{ github.event_name == 'push' && steps.baseline.outputs.mode == 'affected' }}
+        run: pnpm affected --base "${{ steps.baseline.outputs.base }}" --head "${{ github.sha }}" --output affected-manifest.json
       - name: Select all applications for full validation
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event.before == '0000000000000000000000000000000000000000' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.baseline.outputs.mode != 'affected' }}
         run: pnpm all-affected --discovery discovery-manifest.json --output affected-manifest.json
       - name: Publish rebuild and versioning summary
         run: pnpm exec tsx .github/repository-discovery/src/affected-summary-cli.ts affected-manifest.json
