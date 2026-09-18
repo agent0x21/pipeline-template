@@ -17,7 +17,9 @@ jobs:
       - run: pnpm install --no-frozen-lockfile
       - name: Discover applications and publish summary
         id: discovery
-        run: pnpm discover . --output discovery-manifest.json --summary
+        run: pnpm discover . --output discovery-manifest.json
+      - name: Publish discovered applications to the job summary
+        run: pnpm summary discovery-manifest.json
       - uses: actions/upload-artifact@v7
         with:
           name: discovery-manifest
