@@ -13,9 +13,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile=false
-      - run: pnpm discover . --output discovery-manifest.json
+      # No pnpm-lock.yaml is committed yet, so do not enable setup-node's lockfile-based cache.
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm discover . --output discovery-manifest.json --summary
       - uses: actions/upload-artifact@v7
         with:
           name: discovery-manifest
