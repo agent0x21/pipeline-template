@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir .github/repository-discovery install --frozen-lockfile
       - name: Download discovery manifests from the triggering run
         uses: actions/download-artifact@v7
         with:
@@ -50,7 +50,7 @@ jobs:
           run-id: ${{ inputs.discovery_run_id }}
       - name: Create build-and-test matrix
         id: matrix
-        run: pnpm exec tsx .github/repository-discovery/src/build-matrix-cli.ts --affected .pipeline-artifacts/affected-manifest.json --discovery .pipeline-artifacts/discovery-manifest.json
+        run: pnpm --dir .github/repository-discovery exec tsx src/build-matrix-cli.ts --affected ../../.pipeline-artifacts/affected-manifest.json --discovery ../../.pipeline-artifacts/discovery-manifest.json
 
   build-and-test:
     name: Build and test (${{ matrix.name }})
@@ -76,9 +76,12 @@ jobs:
         if: ${{ matrix.ecosystem == 'dotnet' }}
       - uses: microsoft/setup-msbuild@v2
         if: ${{ matrix.projectSystem == 'legacy-msbuild' }}
-      - name: Install Node dependencies
+      - name: Install pipeline tool dependencies
         if: ${{ matrix.ecosystem == 'node' }}
-        run: pnpm install --frozen-lockfile
+        run: pnpm --dir .github/repository-discovery install --frozen-lockfile
+      - name: Install Node application dependencies
+        if: ${{ matrix.ecosystem == 'node' }}
+        run: pnpm --dir .github/repository-discovery exec tsx src/node-install-cli.ts --root ../.. --application "${{ matrix.path }}"
       - name: Build Node application
         if: ${{ matrix.ecosystem == 'node' }}
         run: pnpm --dir "${{ matrix.path }}" run --if-present build
