@@ -20,7 +20,6 @@ const include = discovery.applications.filter((application) => selected.has(appl
   projectFile: application.files.find((file) => /\.(csproj|fsproj|vbproj)$/i.test(file)) ?? '',
   platform: application.buildRequirements.platform,
   tools: application.buildRequirements.tools,
-  runner: application.buildRequirements.platform === 'windows' ? 'windows-latest' : 'ubuntu-latest',
 }));
 const output = process.env.GITHUB_OUTPUT;
 if (!output) throw new Error('GITHUB_OUTPUT is not available; this command must run in GitHub Actions.');
