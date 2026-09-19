@@ -3,6 +3,7 @@ name: Repository discovery
 on:
   workflow_dispatch:
   push:
+  pull_request:
 
 permissions:
   actions: write
@@ -14,7 +15,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Required only for the push-only affected-application comparison below.
+          # Check out the PR head rather than GitHub's synthetic merge commit so
+          # discovery, affected analysis, and the downstream build use one SHA.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          # Required for the affected-application comparisons below.
           fetch-depth: 0
       - uses: pnpm/action-setup@v6
         with:
@@ -38,8 +42,11 @@ jobs:
       - name: Discover applications affected since the validated baseline
         if: ${{ github.event_name == 'push' && steps.baseline.outputs.mode == 'affected' }}
         run: pnpm exec tsx .github/repository-discovery/src/affected-cli.ts --base "${{ steps.baseline.outputs.base }}" --head "${{ github.sha }}" --output affected-manifest.json
+      - name: Discover applications affected by this pull request
+        if: ${{ github.event_name == 'pull_request' }}
+        run: pnpm exec tsx .github/repository-discovery/src/affected-cli.ts --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --output affected-manifest.json
       - name: Select all applications for full validation
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.baseline.outputs.mode != 'affected' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && steps.baseline.outputs.mode != 'affected') }}
         run: pnpm exec tsx .github/repository-discovery/src/all-affected-cli.ts --discovery discovery-manifest.json --output affected-manifest.json
       - name: Publish rebuild and versioning summary
         run: pnpm exec tsx .github/repository-discovery/src/affected-summary-cli.ts affected-manifest.json
@@ -53,6 +60,9 @@ jobs:
           name: affected-applications-manifest
           path: affected-manifest.json
       - name: Start build and test when applications are affected
+        # Fork PR tokens cannot dispatch workflows. Same-repository PRs use their
+        # head branch so the downstream workflow definition matches the change.
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: pnpm exec tsx .github/repository-discovery/src/dispatch-build-cli.ts --affected affected-manifest.json --repository "${{ github.repository }}" --ref "${{ github.ref_name }}" --source-sha "${{ github.sha }}" --discovery-run-id "${{ github.run_id }}" --workflow "build-and-test.yml"
+        run: pnpm exec tsx .github/repository-discovery/src/dispatch-build-cli.ts --affected affected-manifest.json --repository "${{ github.repository }}" --ref "${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}" --source-sha "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}" --discovery-run-id "${{ github.run_id }}" --workflow "build-and-test.yml"
