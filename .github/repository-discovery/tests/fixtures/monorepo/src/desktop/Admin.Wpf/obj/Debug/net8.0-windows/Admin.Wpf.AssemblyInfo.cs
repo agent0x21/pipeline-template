@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Admin.Wpf")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f9ec04fc8d8b699b461bf1ac84703eab4d03f34a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+824667f910e8240e9663054e92873aa7cbeddf01")]
 [assembly: System.Reflection.AssemblyProductAttribute("Admin.Wpf")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Admin.Wpf")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

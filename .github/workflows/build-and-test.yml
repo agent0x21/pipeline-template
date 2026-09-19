@@ -119,6 +119,8 @@ jobs:
         if: ${{ always() }}
         shell: pwsh
         env:
+          RUN_ID: ${{ github.run_id }}
+          DISCOVERY_RUN_ID: ${{ inputs.discovery_run_id }}
           RESULT: ${{ job.status }}
           APPLICATION_NAME: ${{ matrix.name }}
           APPLICATION_PATH: ${{ matrix.path }}
@@ -131,6 +133,8 @@ jobs:
             '',
             '| Field | Value |',
             '| --- | --- |',
+            "| Workflow run ID | $env:RUN_ID |",
+            "| Discovery run ID | $env:DISCOVERY_RUN_ID |",
             "| Result | **$env:RESULT** |",
             "| Path | $env:APPLICATION_PATH |",
             "| Ecosystem | $env:ECOSYSTEM |",
