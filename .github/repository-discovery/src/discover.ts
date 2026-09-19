@@ -8,6 +8,8 @@ export function listFiles(root: string, current = root): string[] {
   return fs.readdirSync(current, { withFileTypes: true }).flatMap((entry) => {
     if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') return [];
     const full = path.join(current, entry.name);
+    const relative = path.relative(root, full).split(path.sep).join('/');
+    if (relative === '.github/repository-discovery/tests' || relative.startsWith('.github/repository-discovery/tests/')) return [];
     return entry.isDirectory() ? listFiles(root, full) : [full];
   });
 }
