@@ -28,6 +28,10 @@ jobs:
           node-version: 24
       # No pnpm-lock.yaml is committed yet, so do not enable setup-node's lockfile-based cache.
       - run: pnpm install --no-frozen-lockfile
+      - name: Type-check repository discovery
+        run: pnpm exec tsc --project .github/repository-discovery/tsconfig.json --noEmit
+      - name: Test repository discovery
+        run: pnpm exec vitest run .github/repository-discovery/tests
       - name: Discover applications and publish summary
         id: discovery
         run: pnpm exec tsx .github/repository-discovery/src/cli.ts . --output discovery-manifest.json
