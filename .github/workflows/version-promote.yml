@@ -51,11 +51,19 @@ jobs:
         # main as final is deliberately a separate, later step (see version-rc.yml
         # / version-promote.yml design) — this only checks that whatever was
         # QA-signed-off already made it into main via the normal merge/PR flow.
+        # pwsh, not bash: a bare `run:` on this self-hosted Windows runner
+        # defaults to pwsh, and bash's `if ! cmd; then` silently does the
+        # wrong thing there instead of failing — see rc-build.yml.
+        shell: pwsh
+        env:
+          SOURCE_SHA: ${{ steps.promote.outputs.source_sha }}
+          RC_TAG: ${{ steps.promote.outputs.rc_tag }}
         run: |
-          if ! git merge-base --is-ancestor "${{ steps.promote.outputs.source_sha }}" HEAD; then
-            echo "::error::Commit ${{ steps.promote.outputs.source_sha }} (tag ${{ steps.promote.outputs.rc_tag }}) is not on main yet. Merge it before promoting."
+          git merge-base --is-ancestor $env:SOURCE_SHA HEAD
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Commit $env:SOURCE_SHA (tag $env:RC_TAG) is not on main yet. Merge it before promoting."
             exit 1
-          fi
+          }
       - name: Fetch the tested rc artifact from its GitHub Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -64,19 +72,48 @@ jobs:
           --app-id "${{ inputs.app_id }}"
           --version "${{ inputs.rc_version }}"
           --destination "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
+      - name: Validate release-candidate artifact publication inputs
+        shell: pwsh
+        env:
+          ARTIFACT_APP_ID: ${{ inputs.app_id }}
+          ARTIFACT_VERSION: ${{ steps.promote.outputs.final_version }}
+          ARTIFACT_DIRECTORY: ${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote
+          ARTIFACT_REF: ${{ steps.promote.outputs.source_sha }}
+        run: |
+          $required = @{
+            'app-id' = $env:ARTIFACT_APP_ID
+            'version' = $env:ARTIFACT_VERSION
+            'app-directory' = $env:ARTIFACT_DIRECTORY
+            'ref' = $env:ARTIFACT_REF
+          }
+          $missing = @($required.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } | ForEach-Object Key)
+          if ($missing.Count -gt 0) {
+            throw "artifact-publish input(s) missing before invocation: $($missing -join ', ')."
+          }
+          Write-Host "artifact-publish inputs resolved for app '$env:ARTIFACT_APP_ID' (version '$env:ARTIFACT_VERSION', ref '$env:ARTIFACT_REF')."
       - name: Re-publish it under the final version (no rebuild)
         # Creates the final release/tag at the rc's exact source commit — the
         # artifact re-packaged here is byte-for-byte what was fetched above, not
-        # rebuilt, so what passed QA is what ships.
+        # rebuilt, so what passed QA is what ships. It is already the deployable
+        # output (not source), because that's what rc-build.yml published it as.
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: >
-          pnpm exec tsx src/artifact-publish-cli.ts
-          --app-id "${{ inputs.app_id }}"
-          --version "${{ steps.promote.outputs.final_version }}"
-          --app-directory "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
-          --ref "${{ steps.promote.outputs.source_sha }}"
+          ARTIFACT_APP_ID: ${{ inputs.app_id }}
+          ARTIFACT_VERSION: ${{ steps.promote.outputs.final_version }}
+          ARTIFACT_DIRECTORY: ${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote
+          ARTIFACT_REF: ${{ steps.promote.outputs.source_sha }}
+        shell: pwsh
+        run: |
+          & pnpm exec tsx src/artifact-publish-cli.ts `
+            --app-id $env:ARTIFACT_APP_ID `
+            --version $env:ARTIFACT_VERSION `
+            --app-directory $env:ARTIFACT_DIRECTORY `
+            --ref $env:ARTIFACT_REF
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
       - name: Summarize
+        shell: pwsh
         env:
           RUN_ID: ${{ github.run_id }}
           APP_ID: ${{ inputs.app_id }}
@@ -85,15 +122,16 @@ jobs:
           FINAL_TAG: ${{ steps.promote.outputs.final_tag }}
           SOURCE_SHA: ${{ steps.promote.outputs.source_sha }}
         run: |
-          {
-            echo "## Promoted to final version"
-            echo
-            echo "| Field | Value |"
-            echo "| --- | --- |"
-            echo "| Workflow run ID | $RUN_ID |"
-            echo "| Application | $APP_ID |"
-            echo "| Promoted from | $RC_TAG |"
-            echo "| Final version | $FINAL_VERSION |"
-            echo "| Final tag | $FINAL_TAG |"
-            echo "| Commit | $SOURCE_SHA |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          $lines = @(
+            '## Promoted to final version',
+            '',
+            '| Field | Value |',
+            '| --- | --- |',
+            "| Workflow run ID | $env:RUN_ID |",
+            "| Application | $env:APP_ID |",
+            "| Promoted from | $env:RC_TAG |",
+            "| Final version | $env:FINAL_VERSION |",
+            "| Final tag | $env:FINAL_TAG |",
+            "| Commit | $env:SOURCE_SHA |"
+          )
+          $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
