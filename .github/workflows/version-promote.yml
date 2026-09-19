@@ -1,0 +1,89 @@
+name: Promote release candidate to final
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_id:
+        description: Application id to promote (the "id" field from a discovery-manifest.json run)
+        required: true
+        type: string
+      rc_version:
+        description: The release-candidate version to promote, e.g. 1.5.0-rc.2. Must already be QA-signed-off and reachable from main.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: .github/repository-discovery
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Read project toolchain versions
+        id: toolchain
+        run: node src/toolchain.mjs
+      - uses: actions/setup-node@v7
+        if: ${{ steps.toolchain.outputs.node != '' }}
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        if: ${{ steps.toolchain.outputs.pnpm != '' }}
+        with:
+          version: ${{ steps.toolchain.outputs.pnpm }}
+          package_json_file: .github/repository-discovery/package.json
+      - run: pnpm install --frozen-lockfile
+      - name: Compute the final version and validate the rc tag
+        id: promote
+        run: >
+          pnpm exec tsx src/version-promote-cli.ts --root ../..
+          --app-id "${{ inputs.app_id }}"
+          --rc-version "${{ inputs.rc_version }}"
+      - name: Confirm the release candidate is reachable from main
+        # The rc tag was created against an arbitrary commit (any branch). Tagging
+        # main as final is deliberately a separate, later step (see version-rc.yml
+        # / version-promote.yml design) — this only checks that whatever was
+        # QA-signed-off already made it into main via the normal merge/PR flow.
+        run: |
+          if ! git merge-base --is-ancestor "${{ steps.promote.outputs.source_sha }}" HEAD; then
+            echo "::error::Commit ${{ steps.promote.outputs.source_sha }} (tag ${{ steps.promote.outputs.rc_tag }}) is not on main yet. Merge it before promoting."
+            exit 1
+          fi
+      - name: Fetch the tested rc artifact
+        run: |
+          mkdir -p .pipeline-artifacts/promote
+          ./scripts/artifact-store/fetch.sh "${{ inputs.app_id }}" "${{ inputs.rc_version }}" "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
+      - name: Re-publish it under the final version (no rebuild)
+        run: ./scripts/artifact-store/publish.sh "${{ inputs.app_id }}" "${{ steps.promote.outputs.final_version }}" "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
+      - name: Tag the final version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.promote.outputs.final_tag }}" "${{ steps.promote.outputs.source_sha }}"
+          git push origin "${{ steps.promote.outputs.final_tag }}"
+      - name: Summarize
+        env:
+          APP_ID: ${{ inputs.app_id }}
+          RC_TAG: ${{ steps.promote.outputs.rc_tag }}
+          FINAL_VERSION: ${{ steps.promote.outputs.final_version }}
+          FINAL_TAG: ${{ steps.promote.outputs.final_tag }}
+          SOURCE_SHA: ${{ steps.promote.outputs.source_sha }}
+        run: |
+          {
+            echo "## Promoted to final version"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Application | $APP_ID |"
+            echo "| Promoted from | $RC_TAG |"
+            echo "| Final version | $FINAL_VERSION |"
+            echo "| Final tag | $FINAL_TAG |"
+            echo "| Commit | $SOURCE_SHA |"
+          } >> "$GITHUB_STEP_SUMMARY"

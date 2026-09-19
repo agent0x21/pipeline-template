@@ -9,6 +9,11 @@ export function listFiles(root: string, current = root): string[] {
     if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') return [];
     const full = path.join(current, entry.name);
     const relative = path.relative(root, full).split(path.sep).join('/');
+    // The pipeline's own detector fixtures (a synthetic React app plus several .NET
+    // projects, used only by this repo's unit tests) must never be treated as real
+    // applications when this file is copied into a consuming repository and scanned
+    // from its root. Do not remove this without also removing the fixtures, or adding
+    // an equivalent guard, or discovery will dispatch builds for them again.
     if (relative === '.github/repository-discovery/tests' || relative.startsWith('.github/repository-discovery/tests/')) return [];
     return entry.isDirectory() ? listFiles(root, full) : [full];
   });

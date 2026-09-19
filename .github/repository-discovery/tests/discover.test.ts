@@ -16,4 +16,16 @@ describe('discover', () => {
     const second = JSON.stringify(discover(fixture));
     expect(first).toBe(second);
   });
+
+  it('never detects its own tests/fixtures as applications when scanning the real repository root', () => {
+    // Regression test: discovery previously walked into
+    // .github/repository-discovery/tests/fixtures/monorepo when run against a real
+    // repository root, treating the pipeline's own detector fixtures (a synthetic
+    // React app plus five .NET projects) as real applications and dispatching
+    // builds for them. See discover.ts's listFiles() exclusion for the fix.
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+    const apps = discover(repoRoot).applications;
+    const leaked = apps.filter((app) => app.path.startsWith('.github/repository-discovery/'));
+    expect(leaked).toEqual([]);
+  });
 });
