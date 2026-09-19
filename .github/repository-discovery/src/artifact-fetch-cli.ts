@@ -1,6 +1,6 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { extractZip } from './archive.js';
 import { downloadAsset, findReleaseByTag, type GitHubReleasesConfig } from './github-releases.js';
 import { tagPrefix } from './version.js';
 
@@ -16,7 +16,7 @@ if (!repository || !token) throw new Error('artifact-fetch requires GITHUB_REPOS
 
 const config: GitHubReleasesConfig = { apiUrl: process.env.GITHUB_API_URL ?? 'https://api.github.com', repository, token };
 const tag = `${tagPrefix(appId)}${version}`;
-const assetName = `${appId}-${version}.tar.gz`;
+const assetName = `${appId}-${version}.zip`;
 
 const release = await findReleaseByTag(config, tag);
 if (!release) throw new Error(`No release found for tag "${tag}". It must have been published (via artifact-publish-cli) before it can be fetched.`);
@@ -26,7 +26,7 @@ if (!asset) throw new Error(`Release "${tag}" has no asset named "${assetName}".
 fs.mkdirSync(destination, { recursive: true });
 const archivePath = path.join(destination, assetName);
 fs.writeFileSync(archivePath, await downloadAsset(config, asset));
-execFileSync('tar', ['-xzf', archivePath, '-C', destination]);
+extractZip(archivePath, destination);
 fs.rmSync(archivePath);
 
 console.log(`Fetched ${assetName} from release "${tag}" into ${destination}.`);
