@@ -58,10 +58,10 @@ jobs:
           fi
       - name: Fetch the tested rc artifact
         run: |
-          mkdir -p .pipeline-artifacts/promote
-          ./scripts/artifact-store/fetch.sh "${{ inputs.app_id }}" "${{ inputs.rc_version }}" "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
+          New-Item -ItemType Directory -Force -Path .pipeline-artifacts/promote | Out-Null
+          ./scripts/artifact-store/fetch.ps1 -AppId "${{ inputs.app_id }}" -Version "${{ inputs.rc_version }}" -DestinationDirectory "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
       - name: Re-publish it under the final version (no rebuild)
-        run: ./scripts/artifact-store/publish.sh "${{ inputs.app_id }}" "${{ steps.promote.outputs.final_version }}" "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
+        run: ./scripts/artifact-store/publish.ps1 -AppId "${{ inputs.app_id }}" -Version "${{ steps.promote.outputs.final_version }}" -AppDirectory "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
       - name: Tag the final version
         run: |
           git config user.name "github-actions[bot]"

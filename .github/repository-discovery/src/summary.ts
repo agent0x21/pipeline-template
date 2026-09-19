@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import type { AutoRcCandidate } from './auto-rc.js';
 import type { AffectedManifest, DiscoveryManifest } from './types.js';
 
 function markdownCell(value: string): string {
@@ -40,4 +41,27 @@ export function publishAffectedSummary(manifestPath: string): void {
   if (!summaryPath) throw new Error('GITHUB_STEP_SUMMARY is not available; this command must run in GitHub Actions.');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as AffectedManifest;
   fs.appendFileSync(summaryPath, renderAffectedSummary(manifest, process.env.GITHUB_RUN_ID));
+}
+
+function autoRcReasonLabel(reason: AutoRcCandidate['reason']): string {
+  if (reason === 'first-rc') return 'First release candidate';
+  if (reason === 'direct-file-change') return 'Direct file change';
+  if (reason === 'dependency-change') return 'Dependency change';
+  return reason;
+}
+
+export function renderAutoRcSummary(candidates: AutoRcCandidate[], runId?: string): string {
+  const rows = candidates
+    .map(({ application, reason }) => `| ${markdownCell(application.name)} | ${markdownCell(application.id)} | ${autoRcReasonLabel(reason)} |`)
+    .join('\n');
+  const context = candidates.length
+    ? `**${candidates.length} application(s)** changed since their own last release candidate and will get a new one.`
+    : 'No applications have changed since their own last release candidate; nothing to do.';
+  return `## Automatic release candidates\n\n${runIdLine(runId)}${context}\n\n| Application | Id | Reason |\n|---|---|---|\n${rows || '| — | — | — |'}\n`;
+}
+
+export function publishAutoRcSummary(candidates: AutoRcCandidate[]): void {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) throw new Error('GITHUB_STEP_SUMMARY is not available; this command must run in GitHub Actions.');
+  fs.appendFileSync(summaryPath, renderAutoRcSummary(candidates, process.env.GITHUB_RUN_ID));
 }

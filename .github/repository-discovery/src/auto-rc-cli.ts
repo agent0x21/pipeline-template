@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findAutoRcCandidates } from './auto-rc.js';
+import { publishAutoRcSummary } from './summary.js';
 
 const args = process.argv.slice(2);
 const value = (flag: string) => { const index = args.indexOf(flag); return index >= 0 ? args[index + 1] : undefined; };
@@ -18,3 +19,4 @@ const include = candidates.map(({ application, reason }) => ({
   reason,
 }));
 fs.appendFileSync(output, `matrix=${JSON.stringify({ include })}\nhas_affected=${include.length > 0}\n`);
+publishAutoRcSummary(candidates);

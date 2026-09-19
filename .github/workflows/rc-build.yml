@@ -63,6 +63,10 @@ jobs:
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
           package_json_file: .github/repository-discovery/package.json
+          # Concurrent rc-build.yml runs for different applications share this
+          # runner; a shared install path races on delete/recreate (EBUSY).
+          # A unique path per application keeps concurrent builds independent.
+          dest: ~/setup-pnpm-${{ inputs.app_id }}
       - run: pnpm install --frozen-lockfile
       - name: Resolve the application to version
         id: app
@@ -89,6 +93,7 @@ jobs:
         with:
           version: ${{ steps.app_toolchain.outputs.pnpm }}
           package_json_file: .github/repository-discovery/package.json
+          dest: ~/setup-pnpm-${{ inputs.app_id }}
       - uses: actions/setup-dotnet@v4
         if: ${{ steps.app.outputs.ecosystem == 'dotnet' && steps.app_toolchain.outputs.globalJson != '' }}
         with:
@@ -119,9 +124,9 @@ jobs:
         if: ${{ steps.app.outputs.ecosystem == 'dotnet' && steps.app.outputs.project_system == 'legacy-msbuild' }}
         run: msbuild "${{ steps.app.outputs.project_file }}" /t:Build /p:Configuration=Release
       - name: Publish the release-candidate artifact
-        # See scripts/artifact-store/publish.sh — this must be configured before
+        # See scripts/artifact-store/publish.ps1 — this must be configured before
         # this workflow can succeed; it is a placeholder by default.
-        run: ./scripts/artifact-store/publish.sh "${{ inputs.app_id }}" "${{ steps.version.outputs.version }}" "${{ github.workspace }}/${{ steps.app.outputs.path }}"
+        run: ./scripts/artifact-store/publish.ps1 -AppId "${{ inputs.app_id }}" -Version "${{ steps.version.outputs.version }}" -AppDirectory "${{ github.workspace }}/${{ steps.app.outputs.path }}"
       - name: Tag the release candidate
         run: |
           git config user.name "github-actions[bot]"

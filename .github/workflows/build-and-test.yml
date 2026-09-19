@@ -89,6 +89,10 @@ jobs:
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
           package_json_file: .github/repository-discovery/package.json
+          # Concurrent matrix jobs for different applications share this runner;
+          # a shared install path races on delete/recreate (EBUSY). A unique
+          # path per application keeps concurrent builds independent.
+          dest: ~/setup-pnpm-${{ matrix.id }}
       - uses: actions/setup-dotnet@v4
         if: ${{ matrix.ecosystem == 'dotnet' && steps.toolchain.outputs.globalJson != '' }}
         with:

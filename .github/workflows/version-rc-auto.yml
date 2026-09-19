@@ -65,6 +65,12 @@ jobs:
       # block or cancel rc creation for the others in the same push/PR.
       fail-fast: false
       matrix: ${{ fromJSON(needs.discover-auto-rc.outputs.matrix) }}
+    # Serializes rc creation per application (across overlapping pushes/PRs, not
+    # across different applications in the same run — those still run in
+    # parallel). Without this, two concurrent runs touching the same app could
+    # both compute the same next rc.N and race pushing the tag.
+    concurrency:
+      group: rc-${{ matrix.id }}
     uses: ./.github/workflows/rc-build.yml
     with:
       app_id: ${{ matrix.id }}
