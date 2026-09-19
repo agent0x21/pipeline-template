@@ -10,3 +10,8 @@ export function listTags(root: string, pattern: string): string[] {
 export function tagCommit(root: string, tag: string): string {
   return execFileSync('git', ['rev-list', '-n', '1', tag], { cwd: root, encoding: 'utf8' }).trim();
 }
+
+/** Unix timestamp (seconds) of the commit a tag points at, for ordering tags by actual recency rather than by name. */
+export function tagCommitTimestamp(root: string, tag: string): number {
+  return Number(execFileSync('git', ['log', '-1', '--format=%ct', tag], { cwd: root, encoding: 'utf8' }).trim());
+}
