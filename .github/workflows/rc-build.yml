@@ -123,16 +123,19 @@ jobs:
       - name: Build legacy .NET application
         if: ${{ steps.app.outputs.ecosystem == 'dotnet' && steps.app.outputs.project_system == 'legacy-msbuild' }}
         run: msbuild "${{ steps.app.outputs.project_file }}" /t:Build /p:Configuration=Release
-      - name: Publish the release-candidate artifact
-        # See scripts/artifact-store/publish.ps1 — this must be configured before
-        # this workflow can succeed; it is a placeholder by default.
-        run: ./scripts/artifact-store/publish.ps1 -AppId "${{ inputs.app_id }}" -Version "${{ steps.version.outputs.version }}" -AppDirectory "${{ github.workspace }}/${{ steps.app.outputs.path }}"
-      - name: Tag the release candidate
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ steps.version.outputs.tag }}" "${{ steps.checkout.outputs.sha }}"
-          git push origin "${{ steps.version.outputs.tag }}"
+      - name: Publish the release-candidate artifact to a GitHub Release
+        # This is the rc's tag AND its stored artifact in one step: creating the
+        # release also creates the underlying git tag at steps.checkout.outputs.sha,
+        # so there is no separate tag/push step. See src/github-releases.ts and
+        # src/artifact-publish-cli.ts to swap this for a different registry later.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >
+          pnpm exec tsx src/artifact-publish-cli.ts
+          --app-id "${{ inputs.app_id }}"
+          --version "${{ steps.version.outputs.version }}"
+          --app-directory "${{ github.workspace }}/${{ steps.app.outputs.path }}"
+          --ref "${{ steps.checkout.outputs.sha }}"
       - name: Summarize
         env:
           RUN_ID: ${{ github.run_id }}

@@ -56,18 +56,26 @@ jobs:
             echo "::error::Commit ${{ steps.promote.outputs.source_sha }} (tag ${{ steps.promote.outputs.rc_tag }}) is not on main yet. Merge it before promoting."
             exit 1
           fi
-      - name: Fetch the tested rc artifact
-        run: |
-          New-Item -ItemType Directory -Force -Path .pipeline-artifacts/promote | Out-Null
-          ./scripts/artifact-store/fetch.ps1 -AppId "${{ inputs.app_id }}" -Version "${{ inputs.rc_version }}" -DestinationDirectory "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
+      - name: Fetch the tested rc artifact from its GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >
+          pnpm exec tsx src/artifact-fetch-cli.ts
+          --app-id "${{ inputs.app_id }}"
+          --version "${{ inputs.rc_version }}"
+          --destination "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
       - name: Re-publish it under the final version (no rebuild)
-        run: ./scripts/artifact-store/publish.ps1 -AppId "${{ inputs.app_id }}" -Version "${{ steps.promote.outputs.final_version }}" -AppDirectory "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
-      - name: Tag the final version
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ steps.promote.outputs.final_tag }}" "${{ steps.promote.outputs.source_sha }}"
-          git push origin "${{ steps.promote.outputs.final_tag }}"
+        # Creates the final release/tag at the rc's exact source commit — the
+        # artifact re-packaged here is byte-for-byte what was fetched above, not
+        # rebuilt, so what passed QA is what ships.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >
+          pnpm exec tsx src/artifact-publish-cli.ts
+          --app-id "${{ inputs.app_id }}"
+          --version "${{ steps.promote.outputs.final_version }}"
+          --app-directory "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
+          --ref "${{ steps.promote.outputs.source_sha }}"
       - name: Summarize
         env:
           RUN_ID: ${{ github.run_id }}
