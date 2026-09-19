@@ -55,7 +55,7 @@ public partial class MainWindow : Window
 
     private void CreatePipeline_Click(object sender, RoutedEventArgs e)
     {
-        MessageBox.Show("Pipeline creation is ready to be connected.", "Create a pipeline", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBox.Show("Pipeline creation is ready to be connected!", "Create a pipeline", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 }
 
