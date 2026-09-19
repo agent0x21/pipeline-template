@@ -19,6 +19,9 @@ permissions:
 jobs:
   prepare:
     name: Prepare affected build matrix
+    defaults:
+      run:
+        working-directory: .github/repository-discovery
     runs-on: self-hosted
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -27,30 +30,37 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_sha }}
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 9
+      - name: Read project toolchain versions
+        id: toolchain
+        run: node src/toolchain.mjs
       - uses: actions/setup-node@v7
+        if: ${{ steps.toolchain.outputs.node != '' }}
         with:
-          node-version: 24
-      - run: pnpm install --no-frozen-lockfile
+          node-version: ${{ steps.toolchain.outputs.node }}
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        if: ${{ steps.toolchain.outputs.pnpm != '' }}
+        with:
+          version: ${{ steps.toolchain.outputs.pnpm }}
+          package_json_file: .github/repository-discovery/package.json
+      - run: pnpm install --frozen-lockfile
       - name: Download discovery manifests from the triggering run
         uses: actions/download-artifact@v7
         with:
           name: discovery-manifest
-          path: .pipeline-artifacts
+          path: .github/repository-discovery/.pipeline-artifacts
           github-token: ${{ github.token }}
           run-id: ${{ inputs.discovery_run_id }}
       - name: Download affected-applications manifest from the triggering run
         uses: actions/download-artifact@v7
         with:
           name: affected-applications-manifest
-          path: .pipeline-artifacts
+          path: .github/repository-discovery/.pipeline-artifacts
           github-token: ${{ github.token }}
           run-id: ${{ inputs.discovery_run_id }}
       - name: Create build-and-test matrix
         id: matrix
-        run: pnpm exec tsx .github/repository-discovery/src/build-matrix-cli.ts --affected .pipeline-artifacts/affected-manifest.json --discovery .pipeline-artifacts/discovery-manifest.json
+        run: pnpm exec tsx src/build-matrix-cli.ts --affected .pipeline-artifacts/affected-manifest.json --discovery .pipeline-artifacts/discovery-manifest.json
 
   build-and-test:
     name: Build and test (${{ matrix.name }})
@@ -64,21 +74,30 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_sha }}
-      - uses: pnpm/action-setup@v6
-        if: ${{ matrix.ecosystem == 'node' }}
-        with:
-          version: 9
+      - name: Read application toolchain versions
+        id: toolchain
+        env:
+          PROJECT_PATH: ${{ matrix.path }}
+        run: node .github/repository-discovery/src/toolchain.mjs
       - uses: actions/setup-node@v7
-        if: ${{ matrix.ecosystem == 'node' }}
+        if: ${{ matrix.ecosystem == 'node' && steps.toolchain.outputs.node != '' }}
         with:
-          node-version: 24
+          node-version: ${{ steps.toolchain.outputs.node }}
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        if: ${{ matrix.ecosystem == 'node' && steps.toolchain.outputs.pnpm != '' }}
+        with:
+          version: ${{ steps.toolchain.outputs.pnpm }}
+          package_json_file: .github/repository-discovery/package.json
       - uses: actions/setup-dotnet@v4
-        if: ${{ matrix.ecosystem == 'dotnet' }}
+        if: ${{ matrix.ecosystem == 'dotnet' && steps.toolchain.outputs.globalJson != '' }}
+        with:
+          global-json-file: ${{ steps.toolchain.outputs.globalJson }}
       - uses: microsoft/setup-msbuild@v2
         if: ${{ matrix.projectSystem == 'legacy-msbuild' }}
       - name: Install Node dependencies
         if: ${{ matrix.ecosystem == 'node' }}
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm --dir "${{ matrix.path }}" install --no-frozen-lockfile
       - name: Build Node application
         if: ${{ matrix.ecosystem == 'node' }}
         run: pnpm --dir "${{ matrix.path }}" run --if-present build
@@ -87,10 +106,12 @@ jobs:
         run: pnpm --dir "${{ matrix.path }}" run --if-present test
       - name: Build modern .NET application
         if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'sdk-style' }}
-        run: dotnet build "${{ matrix.projectFile }}" --configuration Release
+        working-directory: ${{ matrix.path }}
+        run: dotnet build "${{ github.workspace }}/${{ matrix.projectFile }}" --configuration Release
       - name: Test modern .NET application
         if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'sdk-style' }}
-        run: dotnet test "${{ matrix.projectFile }}" --configuration Release --no-build
+        working-directory: ${{ matrix.path }}
+        run: dotnet test "${{ github.workspace }}/${{ matrix.projectFile }}" --configuration Release --no-build
       - name: Build legacy .NET application
         if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'legacy-msbuild' }}
         run: msbuild "${{ matrix.projectFile }}" /t:Build /p:Configuration=Release
@@ -117,3 +138,6 @@ jobs:
           )
           if ($env:PROJECT_FILE) { $lines += "| Project file | $env:PROJECT_FILE |" }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+
+

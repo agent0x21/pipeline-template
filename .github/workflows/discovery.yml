@@ -12,6 +12,9 @@ permissions:
 jobs:
   discover:
     runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: .github/repository-discovery
     steps:
       - uses: actions/checkout@v7
         with:
@@ -20,48 +23,63 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           # Required for the affected-application comparisons below.
           fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 9
+      - name: Read project toolchain versions
+        id: toolchain
+        run: node src/toolchain.mjs
       - uses: actions/setup-node@v7
+        if: ${{ steps.toolchain.outputs.node != '' }}
         with:
-          node-version: 24
-      - run: pnpm install --no-frozen-lockfile
+          node-version: ${{ steps.toolchain.outputs.node }}
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        if: ${{ steps.toolchain.outputs.pnpm != '' }}
+        with:
+          version: ${{ steps.toolchain.outputs.pnpm }}
+          package_json_file: .github/repository-discovery/package.json
+      - run: pnpm install --frozen-lockfile
+      - name: Type-check repository discovery
+        run: pnpm run typecheck:discovery
+      - name: Test repository discovery
+        run: pnpm run test:discovery
       - name: Discover applications and publish summary
         id: discovery
-        run: pnpm exec tsx .github/repository-discovery/src/cli.ts . --output discovery-manifest.json
+        run: pnpm exec tsx src/cli.ts ../.. --output .github/repository-discovery/discovery-manifest.json
       - name: Publish discovered applications to the job summary
-        run: pnpm exec tsx .github/repository-discovery/src/summary-cli.ts discovery-manifest.json
+        run: pnpm exec tsx src/summary-cli.ts discovery-manifest.json
       - name: Resolve last successful build-and-test baseline
         id: baseline
         if: ${{ github.event_name == 'push' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: pnpm exec tsx .github/repository-discovery/src/baseline-cli.ts --repository "${{ github.repository }}" --branch "${{ github.ref_name }}" --head "${{ github.sha }}" --workflow ".github/workflows/build-and-test.yml"
+        run: pnpm exec tsx src/baseline-cli.ts --root ../.. --repository "${{ github.repository }}" --branch "${{ github.ref_name }}" --head "${{ github.sha }}" --workflow ".github/workflows/build-and-test.yml"
       - name: Discover applications affected since the validated baseline
         if: ${{ github.event_name == 'push' && steps.baseline.outputs.mode == 'affected' }}
-        run: pnpm exec tsx .github/repository-discovery/src/affected-cli.ts --base "${{ steps.baseline.outputs.base }}" --head "${{ github.sha }}" --output affected-manifest.json
+        run: pnpm exec tsx src/affected-cli.ts --root ../.. --base "${{ steps.baseline.outputs.base }}" --head "${{ github.sha }}" --output .github/repository-discovery/affected-manifest.json
       - name: Discover applications affected by this pull request
         if: ${{ github.event_name == 'pull_request' }}
-        run: pnpm exec tsx .github/repository-discovery/src/affected-cli.ts --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --output affected-manifest.json
+        run: pnpm exec tsx src/affected-cli.ts --root ../.. --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --output .github/repository-discovery/affected-manifest.json
       - name: Select all applications for full validation
         if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && steps.baseline.outputs.mode != 'affected') }}
-        run: pnpm exec tsx .github/repository-discovery/src/all-affected-cli.ts --discovery discovery-manifest.json --output affected-manifest.json
+        run: pnpm exec tsx src/all-affected-cli.ts --discovery discovery-manifest.json --output affected-manifest.json
       - name: Publish rebuild and versioning summary
-        run: pnpm exec tsx .github/repository-discovery/src/affected-summary-cli.ts affected-manifest.json
+        run: pnpm exec tsx src/affected-summary-cli.ts affected-manifest.json
       - uses: actions/upload-artifact@v7
         with:
           name: discovery-manifest
-          path: discovery-manifest.json
+          path: .github/repository-discovery/discovery-manifest.json
+          include-hidden-files: true
       - name: Upload affected-applications manifest
         uses: actions/upload-artifact@v7
         with:
           name: affected-applications-manifest
-          path: affected-manifest.json
+          path: .github/repository-discovery/affected-manifest.json
+          include-hidden-files: true
       - name: Start build and test when applications are affected
         # Fork PR tokens cannot dispatch workflows. Same-repository PRs use their
         # head branch so the downstream workflow definition matches the change.
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: pnpm exec tsx .github/repository-discovery/src/dispatch-build-cli.ts --affected affected-manifest.json --repository "${{ github.repository }}" --ref "${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}" --source-sha "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}" --discovery-run-id "${{ github.run_id }}" --workflow "build-and-test.yml"
+        run: pnpm exec tsx src/dispatch-build-cli.ts --affected affected-manifest.json --repository "${{ github.repository }}" --ref "${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}" --source-sha "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}" --discovery-run-id "${{ github.run_id }}" --workflow "build-and-test.yml"
+
+
