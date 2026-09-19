@@ -1,0 +1,7 @@
+# Keep pipeline tooling separate from the consuming repository's workspace.
+# The workspace root package is always included; fixture packages are not.
+packages: []
+
+# tsx and Vitest use esbuild's native executable.
+allowBuilds:
+  esbuild: true

@@ -35,3 +35,5 @@ testResults.xml
 .release-work/
 .release-handoff/
 .release-resume/
+
+.github/repository-discovery/tests/**
