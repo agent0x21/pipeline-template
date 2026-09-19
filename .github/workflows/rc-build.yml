@@ -49,7 +49,13 @@ jobs:
         # workflow" dropdown, which can differ from the ref input above. Everything
         # downstream (the rc tag, the artifact) must point at what was actually built.
         id: checkout
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        shell: pwsh
+        run: |
+          $sha = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sha)) {
+            throw 'Could not resolve the SHA of the checked-out commit.'
+          }
+          "sha=$sha" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
       - name: Read project toolchain versions
         id: toolchain
         run: node src/toolchain.mjs
@@ -123,6 +129,25 @@ jobs:
       - name: Build legacy .NET application
         if: ${{ steps.app.outputs.ecosystem == 'dotnet' && steps.app.outputs.project_system == 'legacy-msbuild' }}
         run: msbuild "${{ steps.app.outputs.project_file }}" /t:Build /p:Configuration=Release
+      - name: Validate release-candidate artifact publication inputs
+        shell: pwsh
+        env:
+          ARTIFACT_APP_ID: ${{ inputs.app_id }}
+          ARTIFACT_VERSION: ${{ steps.version.outputs.version }}
+          ARTIFACT_DIRECTORY: ${{ github.workspace }}/${{ steps.app.outputs.path }}
+          ARTIFACT_REF: ${{ steps.checkout.outputs.sha }}
+        run: |
+          $required = @{
+            'app-id' = $env:ARTIFACT_APP_ID
+            'version' = $env:ARTIFACT_VERSION
+            'app-directory' = $env:ARTIFACT_DIRECTORY
+            'ref' = $env:ARTIFACT_REF
+          }
+          $missing = @($required.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } | ForEach-Object Key)
+          if ($missing.Count -gt 0) {
+            throw "artifact-publish input(s) missing before invocation: $($missing -join ', ')."
+          }
+          Write-Host "artifact-publish inputs resolved for app '$env:ARTIFACT_APP_ID' (version '$env:ARTIFACT_VERSION', ref '$env:ARTIFACT_REF')."
       - name: Publish the release-candidate artifact to a GitHub Release
         # This is the rc's tag AND its stored artifact in one step: creating the
         # release also creates the underlying git tag at steps.checkout.outputs.sha,
@@ -130,12 +155,20 @@ jobs:
         # src/artifact-publish-cli.ts to swap this for a different registry later.
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: >
-          pnpm exec tsx src/artifact-publish-cli.ts
-          --app-id "${{ inputs.app_id }}"
-          --version "${{ steps.version.outputs.version }}"
-          --app-directory "${{ github.workspace }}/${{ steps.app.outputs.path }}"
-          --ref "${{ steps.checkout.outputs.sha }}"
+          ARTIFACT_APP_ID: ${{ inputs.app_id }}
+          ARTIFACT_VERSION: ${{ steps.version.outputs.version }}
+          ARTIFACT_DIRECTORY: ${{ github.workspace }}/${{ steps.app.outputs.path }}
+          ARTIFACT_REF: ${{ steps.checkout.outputs.sha }}
+        shell: pwsh
+        run: |
+          & pnpm exec tsx src/artifact-publish-cli.ts `
+            --app-id $env:ARTIFACT_APP_ID `
+            --version $env:ARTIFACT_VERSION `
+            --app-directory $env:ARTIFACT_DIRECTORY `
+            --ref $env:ARTIFACT_REF
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
       - name: Summarize
         env:
           RUN_ID: ${{ github.run_id }}
