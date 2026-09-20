@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 # Candidate discovery relies on the RC tags created by earlier runs as each
 # application's baseline. Serialize the entire main-push workflow, rather than

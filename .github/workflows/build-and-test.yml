@@ -15,6 +15,7 @@ on:
 permissions:
   actions: read
   contents: read
+  packages: write
 
 jobs:
   prepare:
@@ -158,6 +159,26 @@ jobs:
           if ($env:PROJECT_FILE) { $lines += "| Project file | $env:PROJECT_FILE |" }
           if ($env:DOCKERFILE) { $lines += "| Dockerfile | $env:DOCKERFILE |" }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+      - name: Publish Docker container to GitHub Container Registry
+        # Only publish images after this application's build and tests, plus
+        # its result summary, have completed successfully.
+        if: ${{ success() && matrix.dockerfile != '' }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LOCAL_IMAGE: ${{ matrix.id }}:${{ github.sha }}
+          IMAGE_TAG: ${{ inputs.source_sha }}
+          APPLICATION_ID: ${{ matrix.id }}
+        run: |
+          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
+          $application = $env:APPLICATION_ID.ToLowerInvariant()
+          $image = "ghcr.io/$repository/$application`:$env:IMAGE_TAG"
+          $env:GITHUB_TOKEN | docker login ghcr.io --username $env:GITHUB_ACTOR --password-stdin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker tag $env:LOCAL_IMAGE $image
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker push $image
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 
 

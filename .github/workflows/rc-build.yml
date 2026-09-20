@@ -20,7 +20,7 @@ on:
         description: Starting version (X.Y.Z) if this application has never been versioned before. Defaults to 0.1.0.
         required: false
         type: string
-        default: ""
+        default: ''
     outputs:
       version:
         value: ${{ jobs.build.outputs.version }}
@@ -29,6 +29,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build:
@@ -245,6 +246,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
+      - name: Publish Docker container to GitHub Container Registry
+        # The release artifact and tag are already created above; only then
+        # publish the matching image, when this application has a Dockerfile.
+        if: ${{ success() && steps.app.outputs.dockerfile != '' }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LOCAL_IMAGE: ${{ inputs.app_id }}:${{ steps.version.outputs.version }}
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+          APPLICATION_ID: ${{ inputs.app_id }}
+        run: |
+          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
+          $application = $env:APPLICATION_ID.ToLowerInvariant()
+          $image = "ghcr.io/$repository/$application`:$env:IMAGE_TAG"
+          $env:GITHUB_TOKEN | docker login ghcr.io --username $env:GITHUB_ACTOR --password-stdin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker tag $env:LOCAL_IMAGE $image
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker push $image
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Summarize
         # Same shell-mismatch hazard as elsewhere in this file: this used to
         # be a bash heredoc with no `shell:`, which silently wrote nothing
