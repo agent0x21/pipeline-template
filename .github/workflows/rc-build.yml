@@ -283,7 +283,11 @@ jobs:
           DOCKERFILE: ${{ steps.app.outputs.dockerfile }}
         run: |
           $lines = @(
-            '## Release candidate created',
+            '# Release candidate created',
+            '',
+            'The application was built, tested, and published as a release candidate.',
+            '',
+            '## Release candidate details',
             '',
             '| Field | Value |',
             '| --- | --- |',

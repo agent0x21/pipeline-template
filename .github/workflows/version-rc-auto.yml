@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   discover-auto-rc:
+    name: Select applications for release candidates
     # Tagging requires push access, which GitHub does not grant the default
     # token for pull_request runs from a fork. Same restriction discovery.yml
     # already applies to its own build dispatch.
@@ -68,7 +69,7 @@ jobs:
         run: pnpm exec tsx src/auto-rc-cli.ts --root ../..
 
   create-rc:
-    name: Create rc (${{ matrix.name }})
+    name: Create release candidate (${{ matrix.name }})
     needs: discover-auto-rc
     if: ${{ needs.discover-auto-rc.outputs.has_affected == 'true' }}
     strategy:

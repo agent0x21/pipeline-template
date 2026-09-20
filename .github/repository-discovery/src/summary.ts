@@ -52,12 +52,15 @@ function autoRcReasonLabel(reason: AutoRcCandidate['reason']): string {
 
 export function renderAutoRcSummary(candidates: AutoRcCandidate[], runId?: string): string {
   const rows = candidates
-    .map(({ application, reason }) => `| ${markdownCell(application.name)} | ${markdownCell(application.id)} | ${autoRcReasonLabel(reason)} |`)
+    .map(({ application, reason }) => `| ${markdownCell(application.name)} | ${markdownCell(application.id)} | ${markdownCell(application.path || '.')} | ${application.ecosystem} | ${autoRcReasonLabel(reason)} |`)
     .join('\n');
   const context = candidates.length
     ? `**${candidates.length} application(s)** changed since their own last release candidate and will get a new one.`
     : 'No applications have changed since their own last release candidate; nothing to do.';
-  return `## Automatic release candidates\n\n${runIdLine(runId)}${context}\n\n| Application | Id | Reason |\n|---|---|---|\n${rows || '| — | — | — |'}\n`;
+  const next = candidates.length
+    ? 'A release-candidate build will run independently for each listed application.'
+    : 'No release-candidate builds will be started.';
+  return `# Automatic release candidates\n\n${runIdLine(runId)}${context}\n\n## Selected applications\n\n| Application | ID | Path | Ecosystem | Reason |\n|---|---|---|---|---|\n${rows || '| — | — | — | — | — |'}\n\n## Next\n\n${next}\n`;
 }
 
 export function publishAutoRcSummary(candidates: AutoRcCandidate[]): void {
