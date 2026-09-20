@@ -12,10 +12,10 @@ function runIdLine(runId: string | undefined): string {
 
 export function renderSummary(data: DiscoveryManifest, runId?: string): string {
   const applications = data.applications.map((application) =>
-    `| ${markdownCell(application.name)} | ${markdownCell(application.path || '.')} | ${application.ecosystem} | ${application.subtype} | ${application.projectSystem} | ${markdownCell(application.targetFrameworks.join(', ') || '—')} | ${application.buildRequirements.platform} | ${markdownCell(application.buildRequirements.tools.join(', '))} | ${markdownCell(application.files.join(', '))} |`,
+    `| ${markdownCell(application.name)} | ${markdownCell(application.id)} | ${markdownCell(application.path || '.')} | ${application.ecosystem} | ${application.subtype} | ${application.projectSystem} | ${markdownCell(application.targetFrameworks.join(', ') || '—')} | ${application.buildRequirements.platform} | ${markdownCell(application.buildRequirements.tools.join(', '))} | ${markdownCell(application.files.join(', '))} |`,
   ).join('\n');
 
-  return `# Repository discovery\n\n${runIdLine(runId)}Discovered **${data.applications.length} application(s)**.\n\n## Applications\n\n| Name | Path | Ecosystem | Subtype | Project system | Target framework(s) | Platform | Tools | Files |\n|---|---|---|---|---|---|---|---|---|\n${applications || '| — | — | — | — | — | — | — | — | — |'}\n`;
+  return `# Repository discovery\n\n${runIdLine(runId)}Discovered **${data.applications.length} application(s)**.\n\n## Applications\n\n| Name | ID | Path | Ecosystem | Subtype | Project system | Target framework(s) | Platform | Tools | Files |\n|---|---|---|---|---|---|---|---|---|---|\n${applications || '| — | — | — | — | — | — | — | — | — | — |'}\n`;
 }
 
 export function publishSummary(manifestPath: string): void {

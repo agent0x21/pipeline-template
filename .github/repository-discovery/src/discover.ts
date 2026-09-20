@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Detector, DiscoveryManifest } from './types.js';
 import { DotnetDetector } from './detectors/dotnet.js';
 import { ReactDetector } from './detectors/react.js';
+import { applyAutomaticNames } from './naming.js';
 
 export function listFiles(root: string, current = root): string[] {
   return fs.readdirSync(current, { withFileTypes: true }).flatMap((entry) => {
@@ -21,6 +22,6 @@ export function listFiles(root: string, current = root): string[] {
 
 export function discover(root: string, detectors: Detector[] = [new ReactDetector(), new DotnetDetector()]): DiscoveryManifest {
   const context = { root: path.resolve(root), files: listFiles(path.resolve(root)) };
-  const applications = detectors.flatMap((detector) => detector.detect(context)).sort((a, b) => a.id.localeCompare(b.id));
+  const applications = applyAutomaticNames(detectors.flatMap((detector) => detector.detect(context))).sort((a, b) => a.id.localeCompare(b.id));
   return { schemaVersion: 1, generatedBy: 'polyglot-repository-discovery', applications };
 }

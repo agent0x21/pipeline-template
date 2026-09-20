@@ -86,6 +86,11 @@ describe('nextRcVersion', () => {
     expect(result.version).toBe('1.5.0-rc.3');
   });
 
+  it('continues version history from the prior path-derived ID but writes the new tag with the friendly ID', () => {
+    const result = nextRcVersion('api', ['apps-api-dotnetwebapi-api/v0.1.0', 'apps-api-dotnetwebapi-api/v0.2.0-rc.1'], { bumpLevel: 'minor' }, ['apps-api-dotnetwebapi-api']);
+    expect(result).toMatchObject({ version: '0.2.0-rc.2', tag: 'api/v0.2.0-rc.2' });
+  });
+
   it('respects an explicit major or patch bump override', () => {
     const tags = ['portal/v1.4.0'];
     expect(nextRcVersion('portal', tags, { bumpLevel: 'major' }).target).toEqual({ major: 2, minor: 0, patch: 0 });

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       rc_tag:
-        description: Release-candidate tag to promote, e.g. apps-web/v0.1.0-rc.1. It must be QA-signed-off and reachable from main.
+        description: Release-candidate tag to promote, e.g. web/v0.1.0-rc.1. It must be QA-signed-off and reachable from main.
         required: true
         type: string
 
@@ -41,6 +41,11 @@ jobs:
         run: >
           pnpm exec tsx src/version-promote-cli.ts --root ../..
           --rc-tag "${{ inputs.rc_tag }}"
+      - name: Resolve the application name
+        id: app
+        run: >
+          pnpm exec tsx src/app-lookup-cli.ts --root ../..
+          --app-id "${{ steps.promote.outputs.app_id }}"
       - name: Confirm the release candidate is reachable from main
         # The rc tag was created against an arbitrary commit (any branch). Tagging
         # main as final is deliberately a separate, later step (see version-rc.yml
@@ -111,6 +116,7 @@ jobs:
         shell: pwsh
         env:
           RUN_ID: ${{ github.run_id }}
+          APP_NAME: ${{ steps.app.outputs.name }}
           APP_ID: ${{ steps.promote.outputs.app_id }}
           RC_TAG: ${{ steps.promote.outputs.rc_tag }}
           FINAL_VERSION: ${{ steps.promote.outputs.final_version }}
@@ -123,7 +129,7 @@ jobs:
             '| Field | Value |',
             '| --- | --- |',
             "| Workflow run ID | $env:RUN_ID |",
-            "| Application | $env:APP_ID |",
+            "| Application | $env:APP_NAME ($env:APP_ID) |",
             "| Promoted from | $env:RC_TAG |",
             "| Final version | $env:FINAL_VERSION |",
             "| Final tag | $env:FINAL_TAG |",

@@ -23,9 +23,10 @@ export const defaultGitOps: GitOps = { listTags, tagCommit, tagCommitTimestamp, 
  * ordering, since those can't be trusted to reflect real chronology on their own.
  * Returns undefined if this application has never had an rc tag.
  */
-export function latestRcCommit(root: string, appId: string, git: GitOps = defaultGitOps): string | undefined {
-  const prefix = tagPrefix(appId);
-  const rcTags = git.listTags(root, appTagPattern(appId)).filter((tag) => parseRcVersion(tag.slice(prefix.length)));
+export function latestRcCommit(root: string, appId: string, git: GitOps = defaultGitOps, legacyIds: string[] = []): string | undefined {
+  const prefixes = [...new Set([appId, ...legacyIds])].map(tagPrefix);
+  const rcTags = [...new Set([...new Set([appId, ...legacyIds])].flatMap((id) => git.listTags(root, appTagPattern(id))))]
+    .filter((tag) => prefixes.some((prefix) => tag.startsWith(prefix) && parseRcVersion(tag.slice(prefix.length))));
   if (!rcTags.length) return undefined;
   const withTimestamps = rcTags.map((tag) => ({ sha: git.tagCommit(root, tag), ts: git.tagCommitTimestamp(root, tag) }));
   return withTimestamps.sort((a, b) => b.ts - a.ts)[0].sha;
@@ -46,7 +47,7 @@ export function findAutoRcCandidates(root: string, head: string, git: GitOps = d
   const diffCache = new Map<string, string[]>();
   const candidates: AutoRcCandidate[] = [];
   for (const application of graph.applications) {
-    const baseline = latestRcCommit(root, application.id, git);
+    const baseline = latestRcCommit(root, application.id, git, application.legacyId ? [application.legacyId] : []);
     if (!baseline) {
       candidates.push({ application, reason: 'first-rc' });
       continue;

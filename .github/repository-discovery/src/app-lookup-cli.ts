@@ -11,7 +11,10 @@ const output = process.env.GITHUB_OUTPUT;
 if (!appId) throw new Error('app-lookup requires --app-id.');
 if (!output) throw new Error('GITHUB_OUTPUT is not available; this command must run in GitHub Actions.');
 
-const application = discover(root).applications.find((app) => app.id === appId);
+// Promotion can still target an RC created before friendly directory IDs were
+// introduced, so accept that historical ID for lookup while preserving it for
+// the release/artifact operations themselves.
+const application = discover(root).applications.find((app) => app.id === appId || app.legacyId === appId);
 if (!application) {
   throw new Error(`Application "${appId}" was not found by discovery at this ref. Check the app id (from a discovery-manifest.json run) and that the ref actually contains it.`);
 }

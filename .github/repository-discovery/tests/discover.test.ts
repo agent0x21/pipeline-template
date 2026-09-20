@@ -10,8 +10,14 @@ describe('discover', () => {
     expect(apps.map((app) => app.subtype)).toEqual(['react', 'web', 'winforms', 'wpf', 'aspnet-framework', 'library-or-service']);
     expect(apps.find((app) => app.subtype === 'wpf')?.buildRequirements).toEqual({ platform: 'windows', tools: ['msbuild'] });
     const react = apps.find((app) => app.subtype === 'react');
+    expect(react).toMatchObject({ id: 'portal', name: 'Portal', legacyId: 'apps-portal' });
     expect(react?.files).toEqual(['apps/portal/package.json']);
     expect(react?.dockerfile).toBe('apps/portal/Dockerfile');
+  });
+
+  it('uses the app directory for friendly names while retaining the old ID for release-history lookup', () => {
+    const api = discover(fixture).applications.find((app) => app.path === 'src/api/Orders.Api');
+    expect(api).toMatchObject({ id: 'orders-api', name: 'Orders API', legacyId: 'src-api-orders-api-orders-api' });
   });
   it('emits stable output independent of filesystem enumeration order', () => {
     const first = JSON.stringify(discover(fixture));

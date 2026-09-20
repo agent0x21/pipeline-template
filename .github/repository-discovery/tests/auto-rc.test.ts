@@ -37,7 +37,7 @@ describe('findAutoRcCandidates', () => {
   it('flags an application that has never had an rc as first-rc, without diffing', () => {
     const git = gitOps({ listTags: vi.fn(() => []) });
     const result = findAutoRcCandidates(fixture, 'HEAD', git);
-    const portal = result.find((c) => c.application.id === 'apps-portal');
+    const portal = result.find((c) => c.application.id === 'portal');
     expect(portal?.reason).toBe('first-rc');
     expect(git.changedFilesFromGit).not.toHaveBeenCalled();
   });
@@ -49,7 +49,7 @@ describe('findAutoRcCandidates', () => {
       tagCommitTimestamp: vi.fn(() => 1),
     });
     const result = findAutoRcCandidates(fixture, 'head-sha', git);
-    expect(result.find((c) => c.application.id === 'apps-portal')).toBeUndefined();
+    expect(result.find((c) => c.application.id === 'portal')).toBeUndefined();
   });
 
   it('flags a direct file change within the application since its own last rc', () => {
@@ -60,7 +60,7 @@ describe('findAutoRcCandidates', () => {
       changedFilesFromGit: vi.fn(() => ['apps/portal/src/App.tsx']),
     });
     const result = findAutoRcCandidates(fixture, 'head-sha', git);
-    expect(result.find((c) => c.application.id === 'apps-portal')?.reason).toBe('direct-file-change');
+    expect(result.find((c) => c.application.id === 'portal')?.reason).toBe('direct-file-change');
   });
 
   it('flags a dependency change (a consumed local package) since the last rc, even with no direct file change', () => {
@@ -71,7 +71,7 @@ describe('findAutoRcCandidates', () => {
       changedFilesFromGit: vi.fn(() => ['shared/contracts/index.ts']),
     });
     const result = findAutoRcCandidates(fixture, 'head-sha', git);
-    expect(result.find((c) => c.application.id === 'apps-portal')?.reason).toBe('dependency-change');
+    expect(result.find((c) => c.application.id === 'portal')?.reason).toBe('dependency-change');
   });
 
   it('does not flag an application whose baseline diff touches none of its files or dependencies', () => {
@@ -82,7 +82,7 @@ describe('findAutoRcCandidates', () => {
       changedFilesFromGit: vi.fn(() => ['src/api/Orders.Api/Orders.Api.csproj']),
     });
     const result = findAutoRcCandidates(fixture, 'head-sha', git);
-    expect(result.find((c) => c.application.id === 'apps-portal')).toBeUndefined();
+    expect(result.find((c) => c.application.id === 'portal')).toBeUndefined();
   });
 
   it('reuses one diff per distinct baseline commit shared by multiple applications', () => {

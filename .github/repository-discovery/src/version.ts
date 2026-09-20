@@ -50,21 +50,24 @@ function mustParseFinal(value: string): SemVer {
 }
 
 /** The highest final (non-prerelease) version tagged for this application, if any. */
-export function latestFinalVersion(appId: string, tags: string[]): SemVer | undefined {
-  const prefix = tagPrefix(appId);
+function applicationIds(appId: string, legacyIds: string[]): string[] {
+  return [...new Set([appId, ...legacyIds])];
+}
+
+/** The highest final version across the current ID and any pre-rename IDs. */
+export function latestFinalVersion(appId: string, tags: string[], legacyIds: string[] = []): SemVer | undefined {
+  const prefixes = applicationIds(appId, legacyIds).map(tagPrefix);
   const versions = tags
-    .filter((tag) => tag.startsWith(prefix))
-    .map((tag) => parseFinalVersion(tag.slice(prefix.length)))
+    .flatMap((tag) => prefixes.filter((prefix) => tag.startsWith(prefix)).map((prefix) => parseFinalVersion(tag.slice(prefix.length))))
     .filter((version): version is SemVer => Boolean(version));
   return versions.sort(compareVersions).at(-1);
 }
 
 /** The highest rc build number already used for this exact target version, if any rc series exists for it yet. */
-export function latestRcNumber(appId: string, target: SemVer, tags: string[]): number | undefined {
-  const prefix = tagPrefix(appId);
+export function latestRcNumber(appId: string, target: SemVer, tags: string[], legacyIds: string[] = []): number | undefined {
+  const prefixes = applicationIds(appId, legacyIds).map(tagPrefix);
   const numbers = tags
-    .filter((tag) => tag.startsWith(prefix))
-    .map((tag) => parseRcVersion(tag.slice(prefix.length)))
+    .flatMap((tag) => prefixes.filter((prefix) => tag.startsWith(prefix)).map((prefix) => parseRcVersion(tag.slice(prefix.length))))
     .filter((version): version is SemVer & { rc: number } => Boolean(version))
     .filter((version) => version.major === target.major && version.minor === target.minor && version.patch === target.patch)
     .map((version) => version.rc);
@@ -83,10 +86,10 @@ export interface NextRcOptions { bumpLevel: BumpLevel; initialVersion?: string; 
  * With no final tag yet, `initialVersion` (default 0.1.0) seeds the target directly,
  * unbumped, since there is nothing to bump from.
  */
-export function nextRcVersion(appId: string, tags: string[], options: NextRcOptions): NextRcResult {
-  const latestFinal = latestFinalVersion(appId, tags);
+export function nextRcVersion(appId: string, tags: string[], options: NextRcOptions, legacyIds: string[] = []): NextRcResult {
+  const latestFinal = latestFinalVersion(appId, tags, legacyIds);
   const target = latestFinal ? bump(latestFinal, options.bumpLevel) : mustParseFinal(options.initialVersion ?? '0.1.0');
-  const existingRc = latestRcNumber(appId, target, tags);
+  const existingRc = latestRcNumber(appId, target, tags, legacyIds);
   const rc = existingRc === undefined ? 1 : existingRc + 1;
   const version = formatRcVersion(target, rc);
   return { target, rc, version, tag: `${tagPrefix(appId)}${version}` };

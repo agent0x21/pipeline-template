@@ -273,6 +273,7 @@ jobs:
         shell: pwsh
         env:
           RUN_ID: ${{ github.run_id }}
+          APP_NAME: ${{ steps.app.outputs.name }}
           APP_ID: ${{ inputs.app_id }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -286,7 +287,7 @@ jobs:
             '| Field | Value |',
             '| --- | --- |',
             "| Workflow run ID | $env:RUN_ID |",
-            "| Application | $env:APP_ID |",
+            "| Application | $env:APP_NAME ($env:APP_ID) |",
             "| Version | $env:VERSION |",
             "| Tag | $env:TAG |",
             "| Built from | $env:REF ($env:SHA) |"

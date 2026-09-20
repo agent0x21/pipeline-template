@@ -7,8 +7,17 @@ export interface BuildRequirements {
 }
 
 export interface Application {
+  /**
+   * Stable, container-safe identifier used for tags, artifacts, and images.
+   * It is normally derived from the application's directory name.
+   */
   id: string;
   name: string;
+  /**
+   * The path-derived identifier used by pipeline versions before directory-based
+   * names were introduced. It is retained only to read existing tag history.
+   */
+  legacyId?: string;
   path: string;
   ecosystem: 'node' | 'dotnet';
   type: ProjectType;
