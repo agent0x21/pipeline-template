@@ -164,7 +164,6 @@ jobs:
         # An image is built only when the discovered application contains a
         # Dockerfile. Use the repository root as context for monorepo COPYs.
         if: ${{ steps.app.outputs.dockerfile != '' }}
-        working-directory: ../..
         env:
           DOCKERFILE: ${{ steps.app.outputs.dockerfile }}
           IMAGE_TAG: ${{ inputs.app_id }}:${{ steps.version.outputs.version }}
