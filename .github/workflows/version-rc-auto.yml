@@ -16,6 +16,16 @@ on:
 permissions:
   contents: write
 
+# Candidate discovery relies on the RC tags created by earlier runs as each
+# application's baseline. Serialize the entire main-push workflow, rather than
+# only its per-app build jobs: otherwise a newer push can do discovery before
+# the older run has published its tags and incorrectly select apps from both
+# pushes. Do not cancel an in-progress run: its tags must be available as the
+# baseline before the next queued main commit performs discovery.
+concurrency:
+  group: auto-rc-main-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   discover-auto-rc:
     # Tagging requires push access, which GitHub does not grant the default
