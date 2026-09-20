@@ -21,7 +21,7 @@ app.UseCors("web");
 
 var summaries = new[]
 {
-    "Freezing", "humid-test", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Blazing", "Scalding"
+    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Blazing", "Scalding"
 };
 
 app.MapGet("/weatherforecast", () =>
