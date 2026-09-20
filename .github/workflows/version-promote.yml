@@ -3,12 +3,8 @@ name: Promote release candidate to final
 on:
   workflow_dispatch:
     inputs:
-      app_id:
-        description: Application id to promote (the "id" field from a discovery-manifest.json run)
-        required: true
-        type: string
-      rc_version:
-        description: The release-candidate version to promote, e.g. 1.5.0-rc.2. Must already be QA-signed-off and reachable from main.
+      rc_tag:
+        description: Release-candidate tag to promote, e.g. apps-web/v0.1.0-rc.1. It must be QA-signed-off and reachable from main.
         required: true
         type: string
 
@@ -44,8 +40,7 @@ jobs:
         id: promote
         run: >
           pnpm exec tsx src/version-promote-cli.ts --root ../..
-          --app-id "${{ inputs.app_id }}"
-          --rc-version "${{ inputs.rc_version }}"
+          --rc-tag "${{ inputs.rc_tag }}"
       - name: Confirm the release candidate is reachable from main
         # The rc tag was created against an arbitrary commit (any branch). Tagging
         # main as final is deliberately a separate, later step (see version-rc.yml
@@ -69,13 +64,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: >
           pnpm exec tsx src/artifact-fetch-cli.ts
-          --app-id "${{ inputs.app_id }}"
-          --version "${{ inputs.rc_version }}"
+          --app-id "${{ steps.promote.outputs.app_id }}"
+          --version "${{ steps.promote.outputs.rc_version }}"
           --destination "${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote"
       - name: Validate release-candidate artifact publication inputs
         shell: pwsh
         env:
-          ARTIFACT_APP_ID: ${{ inputs.app_id }}
+          ARTIFACT_APP_ID: ${{ steps.promote.outputs.app_id }}
           ARTIFACT_VERSION: ${{ steps.promote.outputs.final_version }}
           ARTIFACT_DIRECTORY: ${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote
           ARTIFACT_REF: ${{ steps.promote.outputs.source_sha }}
@@ -98,7 +93,7 @@ jobs:
         # output (not source), because that's what rc-build.yml published it as.
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ARTIFACT_APP_ID: ${{ inputs.app_id }}
+          ARTIFACT_APP_ID: ${{ steps.promote.outputs.app_id }}
           ARTIFACT_VERSION: ${{ steps.promote.outputs.final_version }}
           ARTIFACT_DIRECTORY: ${{ github.workspace }}/.github/repository-discovery/.pipeline-artifacts/promote
           ARTIFACT_REF: ${{ steps.promote.outputs.source_sha }}
@@ -116,7 +111,7 @@ jobs:
         shell: pwsh
         env:
           RUN_ID: ${{ github.run_id }}
-          APP_ID: ${{ inputs.app_id }}
+          APP_ID: ${{ steps.promote.outputs.app_id }}
           RC_TAG: ${{ steps.promote.outputs.rc_tag }}
           FINAL_VERSION: ${{ steps.promote.outputs.final_version }}
           FINAL_TAG: ${{ steps.promote.outputs.final_tag }}
