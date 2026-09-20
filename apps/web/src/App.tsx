@@ -50,10 +50,7 @@ function App() {
         <section className="hero-card">
           <div>
             <h2>Your workspace is ready.</h2>
-            <p>
-              Connect your first pipeline and keep every handoff moving! Because
-              Jon was here!
-            </p>
+            <p>Connect your first pipeline and keep every handoff moving!</p>
           </div>
           <span className="sparkle">✦</span>
         </section>
