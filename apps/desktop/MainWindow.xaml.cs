@@ -49,7 +49,7 @@ public partial class MainWindow : Window
         catch (HttpRequestException)
         {
             ApiStatusText.Text = "API unavailable — start apps/api to connect";
-            WeatherSummaryText.Text = "The dashboard is still available offline.";
+            WeatherSummaryText.Text = "The dashboard is still available offline. -Jon was here";
         }
     }
 
