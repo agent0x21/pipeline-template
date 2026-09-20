@@ -22,6 +22,10 @@ export function listFiles(root: string, current = root): string[] {
 
 export function discover(root: string, detectors: Detector[] = [new ReactDetector(), new DotnetDetector()]): DiscoveryManifest {
   const context = { root: path.resolve(root), files: listFiles(path.resolve(root)) };
-  const applications = applyAutomaticNames(detectors.flatMap((detector) => detector.detect(context))).sort((a, b) => a.id.localeCompare(b.id));
+  // Keep the established discovery order based on the original path-derived ID.
+  // Friendly IDs are intentionally independent from that ordering so adding a
+  // friendlier name does not reshuffle matrices or summaries unexpectedly.
+  const applications = applyAutomaticNames(detectors.flatMap((detector) => detector.detect(context)))
+    .sort((a, b) => (a.legacyId ?? a.id).localeCompare(b.legacyId ?? b.id));
   return { schemaVersion: 1, generatedBy: 'polyglot-repository-discovery', applications };
 }

@@ -83,6 +83,7 @@ jobs:
         run: >
           pnpm exec tsx src/version-rc-cli.ts --root ../..
           --app-id "${{ inputs.app_id }}"
+          --legacy-id "${{ steps.app.outputs.legacy_id }}"
           --bump "${{ inputs.bump }}"
           --initial-version "${{ inputs.initial_version }}"
       - name: Read application toolchain versions
