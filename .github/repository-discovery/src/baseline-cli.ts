@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 interface Workflow { id: number; path: string; }
-interface WorkflowRun { head_sha: string; conclusion: string | null; }
+interface WorkflowRun { head_sha: string; conclusion: string | null; display_title?: string; }
 
 const args = process.argv.slice(2);
 const value = (flag: string) => { const index = args.indexOf(flag); return index >= 0 ? args[index + 1] : undefined; };
@@ -11,6 +11,7 @@ const repository = value('--repository');
 const branch = value('--branch');
 const head = value('--head');
 const workflowPath = value('--workflow');
+const runNamePrefix = value('--run-name-prefix');
 const root = path.resolve(value('--root') ?? '.');
 const token = process.env.GITHUB_TOKEN;
 const output = process.env.GITHUB_OUTPUT;
@@ -33,7 +34,7 @@ if (!workflow) throw new Error(`Workflow not found: ${workflowPath}`);
 let base: string | undefined;
 for (let page = 1; page <= 10 && !base; page += 1) {
   const runs = await getJson<{ workflow_runs: WorkflowRun[] }>(`/actions/workflows/${workflow.id}/runs?branch=${encodeURIComponent(branch)}&per_page=100&page=${page}`);
-  base = runs.workflow_runs.find((run) => run.conclusion === 'success')?.head_sha;
+  base = runs.workflow_runs.find((run) => run.conclusion === 'success' && (!runNamePrefix || run.display_title?.startsWith(runNamePrefix)))?.head_sha;
   if (runs.workflow_runs.length < 100) break;
 }
 

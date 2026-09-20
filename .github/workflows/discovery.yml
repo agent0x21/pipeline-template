@@ -1,4 +1,5 @@
 name: Repository discovery
+run-name: "Integrated branch validation: ${{ github.ref_name }}"
 
 on:
   workflow_dispatch:
@@ -14,6 +15,9 @@ permissions:
 jobs:
   discover:
     runs-on: self-hosted
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      has_affected: ${{ steps.matrix.outputs.has_affected }}
     defaults:
       run:
         working-directory: .github/repository-discovery
@@ -48,12 +52,14 @@ jobs:
         run: pnpm exec tsx src/cli.ts ../.. --output .github/repository-discovery/discovery-manifest.json
       - name: Publish discovered applications to the job summary
         run: pnpm exec tsx src/summary-cli.ts discovery-manifest.json
-      - name: Resolve last successful build-and-test baseline
+      - name: Resolve last successful validated branch baseline
         id: baseline
         if: ${{ github.event_name == 'push' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: pnpm exec tsx src/baseline-cli.ts --root ../.. --repository "${{ github.repository }}" --branch "${{ github.ref_name }}" --head "${{ github.sha }}" --workflow ".github/workflows/build-and-test.yml"
+        # Build and test are jobs in this workflow. Therefore, a successful
+        # workflow run is a successful discovery *and* validation baseline.
+        run: pnpm exec tsx src/baseline-cli.ts --root ../.. --repository "${{ github.repository }}" --branch "${{ github.ref_name }}" --head "${{ github.sha }}" --workflow ".github/workflows/discovery.yml" --run-name-prefix "Integrated branch validation:"
       - name: Discover applications affected since the validated baseline
         if: ${{ github.event_name == 'push' && steps.baseline.outputs.mode == 'affected' }}
         run: pnpm exec tsx src/affected-cli.ts --root ../.. --base "${{ steps.baseline.outputs.base }}" --head "${{ github.sha }}" --output .github/repository-discovery/affected-manifest.json
@@ -65,6 +71,9 @@ jobs:
         run: pnpm exec tsx src/all-affected-cli.ts --discovery discovery-manifest.json --output affected-manifest.json
       - name: Publish rebuild and versioning summary
         run: pnpm exec tsx src/affected-summary-cli.ts affected-manifest.json
+      - name: Create build-and-test matrix
+        id: matrix
+        run: pnpm exec tsx src/build-matrix-cli.ts --affected affected-manifest.json --discovery discovery-manifest.json
       - uses: actions/upload-artifact@v7
         with:
           name: discovery-manifest
@@ -76,14 +85,107 @@ jobs:
           name: affected-applications-manifest
           path: .github/repository-discovery/affected-manifest.json
           include-hidden-files: true
-      - name: Start build and test when applications are affected
-        # Fork PR tokens cannot dispatch workflows. Same-repository PRs use their
-        # head branch so the downstream workflow definition matches the change.
-        # PR builds validate Dockerfiles locally but never publish images; branch
-        # pushes retain the existing commit-SHA dev-container publication.
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+  build-and-test:
+    name: Build and test (${{ matrix.name }})
+    needs: discover
+    # Preserve the existing fork-PR boundary: fork PRs get discovery feedback,
+    # while builds run only for branch pushes and same-repository PRs.
+    if: ${{ needs.discover.outputs.has_affected == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Match discovery's checkout, avoiding GitHub's synthetic PR merge SHA.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Read application toolchain versions
+        id: toolchain
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: pnpm exec tsx src/dispatch-build-cli.ts --affected affected-manifest.json --repository "${{ github.repository }}" --ref "${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}" --source-sha "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}" --discovery-run-id "${{ github.run_id }}" --workflow "build-and-test.yml" --publish-containers "${{ github.event_name != 'pull_request' }}"
+          PROJECT_PATH: ${{ matrix.path }}
+        run: node .github/repository-discovery/src/toolchain.mjs
+      - uses: actions/setup-node@v7
+        if: ${{ matrix.ecosystem == 'node' && steps.toolchain.outputs.node != '' }}
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        if: ${{ matrix.ecosystem == 'node' && steps.toolchain.outputs.pnpm != '' }}
+        with:
+          version: ${{ steps.toolchain.outputs.pnpm }}
+          package_json_file: .github/repository-discovery/package.json
+          # Concurrent matrix jobs for different applications share this runner;
+          # a shared install path races on delete/recreate (EBUSY). A unique
+          # path per application keeps concurrent builds independent.
+          dest: ~/setup-pnpm-${{ matrix.id }}
+      - uses: actions/setup-dotnet@v4
+        if: ${{ matrix.ecosystem == 'dotnet' && steps.toolchain.outputs.globalJson != '' }}
+        with:
+          global-json-file: ${{ steps.toolchain.outputs.globalJson }}
+      - uses: microsoft/setup-msbuild@v2
+        if: ${{ matrix.projectSystem == 'legacy-msbuild' }}
+      - name: Install Node dependencies
+        if: ${{ matrix.ecosystem == 'node' }}
+        run: pnpm --dir "${{ matrix.path }}" install --no-frozen-lockfile
+      - name: Build Node application
+        if: ${{ matrix.ecosystem == 'node' }}
+        run: pnpm --dir "${{ matrix.path }}" run --if-present build
+      - name: Test Node application
+        if: ${{ matrix.ecosystem == 'node' }}
+        run: pnpm --dir "${{ matrix.path }}" run --if-present test
+      - name: Build modern .NET application
+        if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'sdk-style' }}
+        working-directory: ${{ matrix.path }}
+        run: dotnet build "${{ github.workspace }}/${{ matrix.projectFile }}" --configuration Release
+      - name: Test modern .NET application
+        if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'sdk-style' }}
+        working-directory: ${{ matrix.path }}
+        run: dotnet test "${{ github.workspace }}/${{ matrix.projectFile }}" --configuration Release --no-build
+      - name: Build legacy .NET application
+        if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'legacy-msbuild' }}
+        run: msbuild "${{ matrix.projectFile }}" /t:Build /p:Configuration=Release
+      - name: Validate Docker container build
+        # Build each Dockerfile locally to verify it, then remove the temporary
+        # image. Non-main automation neither retains nor publishes deployable
+        # container artifacts.
+        if: ${{ matrix.dockerfile != '' }}
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          IMAGE_TAG: validation-${{ matrix.id }}:${{ github.sha }}
+        shell: pwsh
+        run: |
+          docker build --file "$env:DOCKERFILE" --tag "$env:IMAGE_TAG" .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker image rm --force "$env:IMAGE_TAG"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish build and test result
+        if: ${{ always() }}
+        shell: pwsh
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RESULT: ${{ job.status }}
+          APPLICATION_NAME: ${{ matrix.name }}
+          APPLICATION_PATH: ${{ matrix.path }}
+          ECOSYSTEM: ${{ matrix.ecosystem }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          RUNNER: self-hosted
+          PROJECT_FILE: ${{ matrix.projectFile }}
+        run: |
+          $lines = @(
+            "## Build and test: $env:APPLICATION_NAME",
+            '',
+            '| Field | Value |',
+            '| --- | --- |',
+            "| Workflow run ID | $env:RUN_ID |",
+            "| Result | **$env:RESULT** |",
+            "| Path | $env:APPLICATION_PATH |",
+            "| Ecosystem | $env:ECOSYSTEM |",
+            "| Runner | $env:RUNNER |"
+          )
+          if ($env:PROJECT_FILE) { $lines += "| Project file | $env:PROJECT_FILE |" }
+          if ($env:DOCKERFILE) { $lines += "| Dockerfile | $env:DOCKERFILE |" }
+          $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
 

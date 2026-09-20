@@ -63,6 +63,17 @@ describe('baseline CLI', () => {
     expect(mocks.appendFileSync).toHaveBeenCalledWith('test-output', 'base=\nmode=full\n');
   });
 
+  it('uses only successful runs created by the current integrated validation flow when a run-name prefix is required', async () => {
+    process.argv.push('--run-name-prefix', 'Integrated branch validation:');
+    responses([[
+      { head_sha: 'old-discovery-only-sha', conclusion: 'success', display_title: 'Repository discovery' },
+      { head_sha: 'validated-sha', conclusion: 'success', display_title: 'Integrated branch validation: feature/test' },
+    ]]);
+    await import('../src/baseline-cli.js');
+    expect(mocks.appendFileSync).toHaveBeenCalledWith('test-output', 'base=validated-sha\nmode=affected\n');
+    expect(mocks.spawnSync).toHaveBeenCalledWith('git', ['merge-base', '--is-ancestor', 'validated-sha', 'current-sha'], expect.any(Object));
+  });
+
   it('fails without publishing a baseline when the API fails', async () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 403 });
     await expect(import('../src/baseline-cli.js')).rejects.toThrow('GitHub API request failed (403)');
