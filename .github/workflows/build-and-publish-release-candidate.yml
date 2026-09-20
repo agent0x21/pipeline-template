@@ -34,6 +34,11 @@ permissions:
 jobs:
   build:
     runs-on: self-hosted
+    # This environment is deliberately on the job that performs the build,
+    # rather than on its callers, so the same approval gate protects both the
+    # automatic and manually-dispatched release-candidate paths.
+    environment:
+      name: release-candidate
     defaults:
       run:
         working-directory: .github/repository-discovery
