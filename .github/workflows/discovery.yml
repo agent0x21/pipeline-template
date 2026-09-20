@@ -3,7 +3,9 @@ name: Repository discovery
 on:
   workflow_dispatch:
   push:
+    branches-ignore: [main]
   pull_request:
+    branches-ignore: [main]
 
 permissions:
   actions: write
@@ -11,12 +13,6 @@ permissions:
 
 jobs:
   discover:
-    # push to main and pull_request targeting main are handled entirely by
-    # version-rc-auto.yml instead (it builds, tests, and creates a release
-    # candidate for every affected application) — this avoids building the
-    # same main commit twice. Every other branch keeps this workflow's
-    # existing plain build-and-test dispatch, unchanged.
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && !(github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') }}
     runs-on: self-hosted
     defaults:
       run:
