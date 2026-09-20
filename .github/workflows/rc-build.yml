@@ -20,7 +20,7 @@ on:
         description: Starting version (X.Y.Z) if this application has never been versioned before. Defaults to 0.1.0.
         required: false
         type: string
-        default: ''
+        default: ""
     outputs:
       version:
         value: ${{ jobs.build.outputs.version }}
@@ -164,6 +164,7 @@ jobs:
         # An image is built only when the discovered application contains a
         # Dockerfile. Use the repository root as context for monorepo COPYs.
         if: ${{ steps.app.outputs.dockerfile != '' }}
+        working-directory: ${{ github.workspace }}
         env:
           DOCKERFILE: ${{ steps.app.outputs.dockerfile }}
           IMAGE_TAG: ${{ inputs.app_id }}:${{ steps.version.outputs.version }}
