@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   promote:
@@ -114,6 +115,50 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
+      - name: Promote the release-candidate container image
+        # Mirrors "no rebuild" above: this re-tags and pushes the exact image
+        # bytes already published for the rc tag under the final version — it
+        # is never rebuilt from source. Skipped for applications with no
+        # Dockerfile (steps.app.outputs.dockerfile is only set when one exists).
+        if: ${{ steps.app.outputs.dockerfile != '' }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          APPLICATION_ID: ${{ steps.promote.outputs.app_id }}
+          RC_VERSION: ${{ steps.promote.outputs.rc_version }}
+          FINAL_VERSION: ${{ steps.promote.outputs.final_version }}
+        run: |
+          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
+          $application = $env:APPLICATION_ID.ToLowerInvariant()
+          $rcImage = "ghcr.io/$repository/$application`:$env:RC_VERSION"
+          $finalImage = "ghcr.io/$repository/$application`:$env:FINAL_VERSION"
+          $env:GITHUB_TOKEN | docker login ghcr.io --username $env:GITHUB_ACTOR --password-stdin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker pull $rcImage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker tag $rcImage $finalImage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker push $finalImage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Remove locally cached container images
+        # This runner is self-hosted and persistent, so images pulled and
+        # tagged above would otherwise accumulate on its disk indefinitely
+        # across releases. Best-effort: nothing above runs at all for a
+        # non-Dockerized application, so a missing image must not fail an
+        # otherwise successful promotion.
+        if: ${{ always() && steps.app.outputs.dockerfile != '' }}
+        shell: pwsh
+        env:
+          APPLICATION_ID: ${{ steps.promote.outputs.app_id }}
+          RC_VERSION: ${{ steps.promote.outputs.rc_version }}
+          FINAL_VERSION: ${{ steps.promote.outputs.final_version }}
+        run: |
+          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
+          $application = $env:APPLICATION_ID.ToLowerInvariant()
+          $rcImage = "ghcr.io/$repository/$application`:$env:RC_VERSION"
+          $finalImage = "ghcr.io/$repository/$application`:$env:FINAL_VERSION"
+          docker image rm --force $rcImage $finalImage
+          exit 0
       - name: Summarize
         shell: pwsh
         env:
@@ -124,6 +169,7 @@ jobs:
           FINAL_VERSION: ${{ steps.promote.outputs.final_version }}
           FINAL_TAG: ${{ steps.promote.outputs.final_tag }}
           SOURCE_SHA: ${{ steps.promote.outputs.source_sha }}
+          DOCKERFILE: ${{ steps.app.outputs.dockerfile }}
         run: |
           $lines = @(
             '## Promoted to final version',
@@ -137,4 +183,9 @@ jobs:
             "| Final tag | $env:FINAL_TAG |",
             "| Commit | $env:SOURCE_SHA |"
           )
+          if ($env:DOCKERFILE) {
+            $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
+            $application = $env:APP_ID.ToLowerInvariant()
+            $lines += "| Container image | ghcr.io/$repository/${application}:$env:FINAL_VERSION |"
+          }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY

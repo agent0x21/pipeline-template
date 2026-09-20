@@ -267,6 +267,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           docker push $image
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Remove locally built container image
+        # This runner is self-hosted and persistent, so an image built (and,
+        # for a Dockerized app, pushed) above would otherwise accumulate on
+        # its disk indefinitely across releases. Best-effort: the build step
+        # may never have run (no Dockerfile, or an earlier step failed), so a
+        # missing image must not fail an otherwise successful release.
+        if: ${{ always() && steps.app.outputs.dockerfile != '' }}
+        shell: pwsh
+        env:
+          LOCAL_IMAGE: ${{ inputs.app_id }}:${{ steps.version.outputs.version }}
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+          APPLICATION_ID: ${{ inputs.app_id }}
+        run: |
+          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
+          $application = $env:APPLICATION_ID.ToLowerInvariant()
+          $image = "ghcr.io/$repository/$application`:$env:IMAGE_TAG"
+          docker image rm --force $env:LOCAL_IMAGE $image
+          exit 0
       - name: Summarize
         # Same shell-mismatch hazard as elsewhere in this file: this used to
         # be a bash heredoc with no `shell:`, which silently wrote nothing

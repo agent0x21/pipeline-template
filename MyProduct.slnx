@@ -5,16 +5,9 @@
   <Folder Name="/.github/repository-discovery/tests/fixtures/" />
   <Folder Name="/.github/repository-discovery/tests/fixtures/monorepo/" />
   <Folder Name="/.github/repository-discovery/tests/fixtures/monorepo/src/" />
-  <Folder Name="/.github/repository-discovery/tests/fixtures/monorepo/src/api/">
-    <Project Path=".github/repository-discovery/tests/fixtures/monorepo/src/api/Orders.Api/Orders.Api.csproj" />
-  </Folder>
-  <Folder Name="/.github/repository-discovery/tests/fixtures/monorepo/src/desktop/">
-    <Project Path=".github/repository-discovery/tests/fixtures/monorepo/src/desktop/Admin.WinForms/Admin.WinForms.csproj" />
-    <Project Path=".github/repository-discovery/tests/fixtures/monorepo/src/desktop/Admin.Wpf/Admin.Wpf.csproj" />
-  </Folder>
-  <Folder Name="/.github/repository-discovery/tests/fixtures/monorepo/src/shared/">
-    <Project Path=".github/repository-discovery/tests/fixtures/monorepo/src/shared/Contracts/Contracts.csproj" />
-  </Folder>
+  <Folder Name="/.github/repository-discovery/tests/fixtures/monorepo/src/api/" />
+  <Folder Name="/.github/repository-discovery/tests/fixtures/monorepo/src/desktop/" />
+  <Folder Name="/.github/repository-discovery/tests/fixtures/monorepo/src/shared/" />
   <Folder Name="/apps/" />
   <Folder Name="/apps/api/">
     <Project Path="apps/api/DotNetWebAPI.Api.csproj" />

@@ -205,6 +205,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           docker push $image
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Remove locally built container image
+        # This runner is self-hosted and persistent, so the image built and
+        # pushed above would otherwise accumulate on its disk indefinitely
+        # across dev-test runs. Best-effort: the build step may never have
+        # run (no Dockerfile, or an earlier step failed), so a missing image
+        # must not fail an otherwise successful dev-test publish.
+        if: ${{ always() && matrix.dockerfile != '' }}
+        shell: pwsh
+        env:
+          LOCAL_IMAGE: ${{ matrix.id }}:${{ needs.prepare.outputs.dev_image_tag }}
+          DEV_IMAGE_TAG: ${{ needs.prepare.outputs.dev_image_tag }}
+          APPLICATION_ID: ${{ matrix.id }}
+        run: |
+          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
+          $application = $env:APPLICATION_ID.ToLowerInvariant()
+          $image = "ghcr.io/$repository/$application`:$env:DEV_IMAGE_TAG"
+          docker image rm --force $env:LOCAL_IMAGE $image
+          exit 0
       - name: Upload dev-test application package
         uses: actions/upload-artifact@v7
         with:
