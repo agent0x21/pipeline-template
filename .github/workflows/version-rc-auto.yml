@@ -2,15 +2,14 @@ name: Auto release candidates on main
 
 # Automatically creates a release candidate for every application that has
 # changed since its own last release-candidate build (see src/auto-rc.ts),
-# on every push to main and every pull request targeting main. This replaces
-# the plain build-and-test.yml dispatch that discovery.yml would otherwise
-# run for these events (see the guard in discovery.yml) — rc-build.yml
-# already builds and tests as part of creating the rc, so main commits are
-# never built twice.
+# only after its change has landed on main. A push to main is emitted after a
+# pull request is merged, so release candidates are always built from the
+# merged commit—not from an in-progress pull-request head. This replaces the
+# plain build-and-test.yml dispatch that discovery.yml would otherwise run for
+# main commits (see the guard in discovery.yml) — rc-build.yml already builds
+# and tests as part of creating the rc, so main commits are never built twice.
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
 
 permissions:
@@ -30,10 +29,6 @@ concurrency:
 jobs:
   discover-auto-rc:
     name: Select applications for release candidates
-    # Tagging requires push access, which GitHub does not grant the default
-    # token for pull_request runs from a fork. Same restriction discovery.yml
-    # already applies to its own build dispatch.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: self-hosted
     defaults:
       run:
@@ -44,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Read project toolchain versions
         id: toolchain
@@ -74,7 +69,7 @@ jobs:
     if: ${{ needs.discover-auto-rc.outputs.has_affected == 'true' }}
     strategy:
       # Independent per application: one app's build/test failure does not
-      # block or cancel rc creation for the others in the same push/PR.
+      # block or cancel rc creation for the others in the same main push.
       fail-fast: false
       matrix: ${{ fromJSON(needs.discover-auto-rc.outputs.matrix) }}
     # Serializes rc creation per application (across overlapping pushes/PRs, not
@@ -86,5 +81,5 @@ jobs:
     uses: ./.github/workflows/rc-build.yml
     with:
       app_id: ${{ matrix.id }}
-      ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      ref: ${{ github.sha }}
       bump: minor

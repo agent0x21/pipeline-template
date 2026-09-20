@@ -79,9 +79,11 @@ jobs:
       - name: Start build and test when applications are affected
         # Fork PR tokens cannot dispatch workflows. Same-repository PRs use their
         # head branch so the downstream workflow definition matches the change.
+        # PR builds validate Dockerfiles locally but never publish images; branch
+        # pushes retain the existing commit-SHA dev-container publication.
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: pnpm exec tsx src/dispatch-build-cli.ts --affected affected-manifest.json --repository "${{ github.repository }}" --ref "${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}" --source-sha "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}" --discovery-run-id "${{ github.run_id }}" --workflow "build-and-test.yml"
+        run: pnpm exec tsx src/dispatch-build-cli.ts --affected affected-manifest.json --repository "${{ github.repository }}" --ref "${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}" --source-sha "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}" --discovery-run-id "${{ github.run_id }}" --workflow "build-and-test.yml" --publish-containers "${{ github.event_name != 'pull_request' }}"
 
 

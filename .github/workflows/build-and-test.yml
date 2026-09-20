@@ -11,6 +11,11 @@ on:
         description: Repository discovery workflow run ID
         required: true
         type: string
+      publish_containers:
+        description: Publish validated Docker images to GitHub Container Registry
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -161,8 +166,10 @@ jobs:
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
       - name: Publish Docker container to GitHub Container Registry
         # Only publish images after this application's build and tests, plus
-        # its result summary, have completed successfully.
-        if: ${{ success() && matrix.dockerfile != '' }}
+        # its result summary, have completed successfully. Pull-request
+        # validation leaves this disabled: its local Docker build is a
+        # verification step only and produces no deployable container.
+        if: ${{ success() && inputs.publish_containers && matrix.dockerfile != '' }}
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
