@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
  * isn't actually a zip and that `unzip`/Explorer/Python's zipfile refuse to
  * open. Relying on "whichever tar happens to be on PATH" is exactly the
  * kind of silent, runner-dependent failure this pipeline has already been
- * bitten by once (see rc-build.yml's shell-mismatch history).
+ * bitten by once (see build-and-publish-release-candidate.yml's shell-mismatch history).
  *
  * Uses only what's already guaranteed to be present, no new dependency:
  *  - Windows: PowerShell's Compress-Archive — built into Windows PowerShell

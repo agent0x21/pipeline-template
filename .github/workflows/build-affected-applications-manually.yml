@@ -1,34 +1,41 @@
-name: Repository discovery
-run-name: "Integrated branch validation: ${{ github.ref_name }}"
+name: Validation — Build affected applications manually
 
 on:
   workflow_dispatch:
-  push:
-    branches-ignore: [main]
-  pull_request:
-    branches-ignore: [main]
+    inputs:
+      source_sha:
+        description: Commit SHA discovered by the upstream workflow
+        required: true
+        type: string
+      discovery_run_id:
+        description: Validation workflow run ID
+        required: true
+        type: string
+      publish_containers:
+        description: Publish validated Docker images to GitHub Container Registry
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  actions: write
+  actions: read
   contents: read
+  packages: write
 
 jobs:
-  discover:
+  prepare:
+    name: Prepare affected build matrix
+    defaults:
+      run:
+        working-directory: .github/repository-discovery
     runs-on: self-hosted
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       has_affected: ${{ steps.matrix.outputs.has_affected }}
-    defaults:
-      run:
-        working-directory: .github/repository-discovery
     steps:
       - uses: actions/checkout@v7
         with:
-          # Check out the PR head rather than GitHub's synthetic merge commit so
-          # discovery, affected analysis, and the downstream build use one SHA.
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          # Required for the affected-application comparisons below.
-          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
       - name: Read project toolchain versions
         id: toolchain
         run: node src/toolchain.mjs
@@ -43,64 +50,36 @@ jobs:
           version: ${{ steps.toolchain.outputs.pnpm }}
           package_json_file: .github/repository-discovery/package.json
       - run: pnpm install --frozen-lockfile
-      - name: Type-check repository discovery
-        run: pnpm run typecheck:discovery
-      - name: Test repository discovery
-        run: pnpm run test:discovery
-      - name: Discover applications and publish summary
-        id: discovery
-        run: pnpm exec tsx src/cli.ts ../.. --output .github/repository-discovery/discovery-manifest.json
-      - name: Publish discovered applications to the job summary
-        run: pnpm exec tsx src/summary-cli.ts discovery-manifest.json
-      - name: Resolve last successful validated branch baseline
-        id: baseline
-        if: ${{ github.event_name == 'push' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        # Build and test are jobs in this workflow. Therefore, a successful
-        # workflow run is a successful discovery *and* validation baseline.
-        run: pnpm exec tsx src/baseline-cli.ts --root ../.. --repository "${{ github.repository }}" --branch "${{ github.ref_name }}" --head "${{ github.sha }}" --workflow ".github/workflows/discovery.yml" --run-name-prefix "Integrated branch validation:"
-      - name: Discover applications affected since the validated baseline
-        if: ${{ github.event_name == 'push' && steps.baseline.outputs.mode == 'affected' }}
-        run: pnpm exec tsx src/affected-cli.ts --root ../.. --base "${{ steps.baseline.outputs.base }}" --head "${{ github.sha }}" --output .github/repository-discovery/affected-manifest.json
-      - name: Discover applications affected by this pull request
-        if: ${{ github.event_name == 'pull_request' }}
-        run: pnpm exec tsx src/affected-cli.ts --root ../.. --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --output .github/repository-discovery/affected-manifest.json
-      - name: Select all applications for full validation
-        if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && steps.baseline.outputs.mode != 'affected') }}
-        run: pnpm exec tsx src/all-affected-cli.ts --discovery discovery-manifest.json --output affected-manifest.json
-      - name: Publish rebuild and versioning summary
-        run: pnpm exec tsx src/affected-summary-cli.ts affected-manifest.json
-      - name: Create build-and-test matrix
-        id: matrix
-        run: pnpm exec tsx src/build-matrix-cli.ts --affected affected-manifest.json --discovery discovery-manifest.json
-      - uses: actions/upload-artifact@v7
+      - name: Download discovery manifests from the triggering run
+        uses: actions/download-artifact@v7
         with:
           name: discovery-manifest
-          path: .github/repository-discovery/discovery-manifest.json
-          include-hidden-files: true
-      - name: Upload affected-applications manifest
-        uses: actions/upload-artifact@v7
+          path: .github/repository-discovery/.pipeline-artifacts
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.discovery_run_id }}
+      - name: Download affected-applications manifest from the triggering run
+        uses: actions/download-artifact@v7
         with:
           name: affected-applications-manifest
-          path: .github/repository-discovery/affected-manifest.json
-          include-hidden-files: true
+          path: .github/repository-discovery/.pipeline-artifacts
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.discovery_run_id }}
+      - name: Create build-and-test matrix
+        id: matrix
+        run: pnpm exec tsx src/build-matrix-cli.ts --affected .pipeline-artifacts/affected-manifest.json --discovery .pipeline-artifacts/discovery-manifest.json
 
   build-and-test:
     name: Build and test (${{ matrix.name }})
-    needs: discover
-    # Preserve the existing fork-PR boundary: fork PRs get discovery feedback,
-    # while builds run only for branch pushes and same-repository PRs.
-    if: ${{ needs.discover.outputs.has_affected == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    needs: prepare
+    if: ${{ needs.prepare.outputs.has_affected == 'true' }}
     runs-on: self-hosted
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # Match discovery's checkout, avoiding GitHub's synthetic PR merge SHA.
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.source_sha }}
       - name: Read application toolchain versions
         id: toolchain
         env:
@@ -146,25 +125,22 @@ jobs:
       - name: Build legacy .NET application
         if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'legacy-msbuild' }}
         run: msbuild "${{ matrix.projectFile }}" /t:Build /p:Configuration=Release
-      - name: Validate Docker container build
-        # Build each Dockerfile locally to verify it, then remove the temporary
-        # image. Non-main automation neither retains nor publishes deployable
-        # container artifacts.
+      - name: Build Docker container
+        # Dockerfile discovery is scoped to the selected application's own
+        # directory. The repository root remains the build context so images
+        # can COPY shared packages or projects from elsewhere in a monorepo.
         if: ${{ matrix.dockerfile != '' }}
         env:
           DOCKERFILE: ${{ matrix.dockerfile }}
-          IMAGE_TAG: validation-${{ matrix.id }}:${{ github.sha }}
+          IMAGE_TAG: ${{ matrix.id }}:${{ github.sha }}
         shell: pwsh
-        run: |
-          docker build --file "$env:DOCKERFILE" --tag "$env:IMAGE_TAG" .
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          docker image rm --force "$env:IMAGE_TAG"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: docker build --file "$env:DOCKERFILE" --tag "$env:IMAGE_TAG" .
       - name: Publish build and test result
         if: ${{ always() }}
         shell: pwsh
         env:
           RUN_ID: ${{ github.run_id }}
+          DISCOVERY_RUN_ID: ${{ inputs.discovery_run_id }}
           RESULT: ${{ job.status }}
           APPLICATION_NAME: ${{ matrix.name }}
           APPLICATION_PATH: ${{ matrix.path }}
@@ -179,6 +155,7 @@ jobs:
             '| Field | Value |',
             '| --- | --- |',
             "| Workflow run ID | $env:RUN_ID |",
+            "| Discovery run ID | $env:DISCOVERY_RUN_ID |",
             "| Result | **$env:RESULT** |",
             "| Path | $env:APPLICATION_PATH |",
             "| Ecosystem | $env:ECOSYSTEM |",
@@ -187,5 +164,28 @@ jobs:
           if ($env:PROJECT_FILE) { $lines += "| Project file | $env:PROJECT_FILE |" }
           if ($env:DOCKERFILE) { $lines += "| Dockerfile | $env:DOCKERFILE |" }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+      - name: Publish Docker container to GitHub Container Registry
+        # Only publish images after this application's build and tests, plus
+        # its result summary, have completed successfully. Pull-request
+        # validation leaves this disabled: its local Docker build is a
+        # verification step only and produces no deployable container.
+        if: ${{ success() && inputs.publish_containers && matrix.dockerfile != '' }}
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LOCAL_IMAGE: ${{ matrix.id }}:${{ github.sha }}
+          IMAGE_TAG: ${{ inputs.source_sha }}
+          APPLICATION_ID: ${{ matrix.id }}
+        run: |
+          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
+          $application = $env:APPLICATION_ID.ToLowerInvariant()
+          $image = "ghcr.io/$repository/$application`:$env:IMAGE_TAG"
+          $env:GITHUB_TOKEN | docker login ghcr.io --username $env:GITHUB_ACTOR --password-stdin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker tag $env:LOCAL_IMAGE $image
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          docker push $image
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 
 

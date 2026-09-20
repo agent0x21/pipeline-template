@@ -1,4 +1,4 @@
-name: Promote release candidate to final
+name: Release — Promote a candidate to production
 
 on:
   workflow_dispatch:
@@ -48,12 +48,13 @@ jobs:
           --app-id "${{ steps.promote.outputs.app_id }}"
       - name: Confirm the release candidate is reachable from main
         # The rc tag was created against an arbitrary commit (any branch). Tagging
-        # main as final is deliberately a separate, later step (see version-rc.yml
-        # / version-promote.yml design) — this only checks that whatever was
+        # main as final is deliberately a separate, later step (see
+        # create-release-candidate-manually.yml / promote-release-candidate-to-production.yml
+        # design) — this only checks that whatever was
         # QA-signed-off already made it into main via the normal merge/PR flow.
         # pwsh, not bash: a bare `run:` on this self-hosted Windows runner
         # defaults to pwsh, and bash's `if ! cmd; then` silently does the
-        # wrong thing there instead of failing — see rc-build.yml.
+        # wrong thing there instead of failing — see build-and-publish-release-candidate.yml.
         shell: pwsh
         env:
           SOURCE_SHA: ${{ steps.promote.outputs.source_sha }}
@@ -95,7 +96,8 @@ jobs:
         # Creates the final release/tag at the rc's exact source commit — the
         # artifact re-packaged here is byte-for-byte what was fetched above, not
         # rebuilt, so what passed QA is what ships. It is already the deployable
-        # output (not source), because that's what rc-build.yml published it as.
+        # output (not source), because that's what
+        # build-and-publish-release-candidate.yml published it as.
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ARTIFACT_APP_ID: ${{ steps.promote.outputs.app_id }}

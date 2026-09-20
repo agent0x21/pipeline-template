@@ -1,12 +1,14 @@
-name: Auto release candidates on main
+name: Release — Create candidates automatically from main
 
 # Automatically creates a release candidate for every application that has
 # changed since its own last release-candidate build (see src/auto-rc.ts),
 # only after its change has landed on main. A push to main is emitted after a
 # pull request is merged, so release candidates are always built from the
 # merged commit—not from an in-progress pull-request head. This replaces the
-# plain build-and-test.yml dispatch that discovery.yml would otherwise run for
-# main commits (see the guard in discovery.yml) — rc-build.yml already builds
+# plain build-affected-applications-manually.yml dispatch that
+# validate-changed-applications.yml would otherwise run for main commits (see
+# the guard in validate-changed-applications.yml) —
+# build-and-publish-release-candidate.yml already builds
 # and tests as part of creating the rc, so main commits are never built twice.
 on:
   push:
@@ -78,7 +80,7 @@ jobs:
     # both compute the same next rc.N and race pushing the tag.
     concurrency:
       group: rc-${{ matrix.id }}
-    uses: ./.github/workflows/rc-build.yml
+    uses: ./.github/workflows/build-and-publish-release-candidate.yml
     with:
       app_id: ${{ matrix.id }}
       ref: ${{ github.sha }}

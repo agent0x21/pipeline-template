@@ -1,4 +1,4 @@
-name: Build and tag a release candidate
+name: Release — Build and publish a candidate (reusable)
 
 on:
   workflow_call:
@@ -70,7 +70,7 @@ jobs:
         with:
           version: ${{ steps.toolchain.outputs.pnpm }}
           package_json_file: .github/repository-discovery/package.json
-          # Concurrent rc-build.yml runs for different applications share this
+          # Concurrent build-and-publish-release-candidate.yml runs for different applications share this
           # runner; a shared install path races on delete/recreate (EBUSY).
           # A unique path per application keeps concurrent builds independent.
           dest: ~/setup-pnpm-${{ inputs.app_id }}

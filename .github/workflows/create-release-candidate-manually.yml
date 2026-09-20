@@ -1,4 +1,4 @@
-name: Create release candidate
+name: Release — Create a candidate manually
 
 on:
   workflow_dispatch:
@@ -32,12 +32,12 @@ permissions:
 
 jobs:
   version-rc:
-    # Serializes rc creation per application, matching version-rc-auto.yml's
+    # Serializes rc creation per application, matching create-release-candidates-from-main.yml's
     # guard, so a manual dispatch can't race the automatic flow (or another
     # manual dispatch) for the same application.
     concurrency:
       group: rc-${{ inputs.app_id }}
-    uses: ./.github/workflows/rc-build.yml
+    uses: ./.github/workflows/build-and-publish-release-candidate.yml
     with:
       app_id: ${{ inputs.app_id }}
       ref: ${{ inputs.ref }}

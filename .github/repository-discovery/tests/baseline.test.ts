@@ -9,7 +9,7 @@ const fetchMock = vi.fn();
 const success = { head_sha: 'validated-sha', conclusion: 'success' };
 
 function responses(pages: unknown[][]) {
-  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ workflows: [{ id: 7, path: '.github/workflows/build-and-test.yml' }] }) });
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ workflows: [{ id: 7, path: '.github/workflows/build-affected-applications-manually.yml' }] }) });
   for (const workflow_runs of pages) {
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ workflow_runs }) });
   }
@@ -23,7 +23,7 @@ beforeEach(() => {
   vi.stubEnv('GITHUB_TOKEN', 'test-token');
   vi.stubEnv('GITHUB_OUTPUT', 'test-output');
   vi.stubEnv('GITHUB_API_URL', 'https://api.example.test');
-  process.argv = ['node', 'baseline-cli', '--repository', 'owner/repo', '--branch', 'feature/test', '--head', 'current-sha', '--workflow', '.github/workflows/build-and-test.yml'];
+  process.argv = ['node', 'baseline-cli', '--repository', 'owner/repo', '--branch', 'feature/test', '--head', 'current-sha', '--workflow', '.github/workflows/build-affected-applications-manually.yml'];
   mocks.spawnSync.mockReturnValue({ status: 0 });
 });
 

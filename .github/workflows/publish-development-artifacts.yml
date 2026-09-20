@@ -1,11 +1,11 @@
-name: Build dev-test artifacts
+name: Development — Publish artifacts from a validated branch
 run-name: "Dev-test artifacts from validation run ${{ inputs.source_run_id }}"
 
 on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Successful integrated non-main Repository discovery run ID to rebuild
+        description: Successful integrated non-main validation workflow run ID to rebuild
         required: true
         type: string
 
@@ -52,7 +52,7 @@ jobs:
           pnpm exec tsx src/dev-source-run-cli.ts
           --repository "${{ github.repository }}"
           --run-id "${{ inputs.source_run_id }}"
-          --workflow ".github/workflows/discovery.yml"
+          --workflow ".github/workflows/validate-changed-applications.yml"
           --run-name-prefix "Integrated branch validation:"
       - name: Download source discovery manifest
         uses: actions/download-artifact@v7

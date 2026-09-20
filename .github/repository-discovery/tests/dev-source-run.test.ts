@@ -7,7 +7,7 @@ const originalArgv = process.argv;
 const fetchMock = vi.fn();
 
 function successResponses(run: Record<string, unknown>) {
-  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ workflows: [{ id: 7, path: '.github/workflows/discovery.yml' }] }) });
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ workflows: [{ id: 7, path: '.github/workflows/validate-changed-applications.yml' }] }) });
   fetchMock.mockResolvedValueOnce({ ok: true, json: async () => run });
 }
 
@@ -19,7 +19,7 @@ beforeEach(() => {
   vi.stubEnv('GITHUB_TOKEN', 'test-token');
   vi.stubEnv('GITHUB_OUTPUT', 'test-output');
   vi.stubEnv('GITHUB_API_URL', 'https://api.example.test');
-  process.argv = ['node', 'dev-source-run-cli', '--repository', 'owner/repo', '--run-id', '123', '--workflow', '.github/workflows/discovery.yml', '--run-name-prefix', 'Integrated branch validation:'];
+  process.argv = ['node', 'dev-source-run-cli', '--repository', 'owner/repo', '--run-id', '123', '--workflow', '.github/workflows/validate-changed-applications.yml', '--run-name-prefix', 'Integrated branch validation:'];
 });
 
 afterEach(() => {
