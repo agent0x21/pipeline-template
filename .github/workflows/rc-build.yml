@@ -160,6 +160,16 @@ jobs:
       - name: Build legacy .NET application
         if: ${{ steps.app.outputs.ecosystem == 'dotnet' && steps.app.outputs.project_system == 'legacy-msbuild' }}
         run: msbuild "${{ steps.app.outputs.project_file }}" /t:Build /p:Configuration=Release
+      - name: Build Docker container
+        # An image is built only when the discovered application contains a
+        # Dockerfile. Use the repository root as context for monorepo COPYs.
+        if: ${{ steps.app.outputs.dockerfile != '' }}
+        working-directory: ../..
+        env:
+          DOCKERFILE: ${{ steps.app.outputs.dockerfile }}
+          IMAGE_TAG: ${{ inputs.app_id }}:${{ steps.version.outputs.version }}
+        shell: pwsh
+        run: docker build --file "$env:DOCKERFILE" --tag "$env:IMAGE_TAG" .
       - name: Determine the artifact directory to publish
         # The published artifact must be the actual deployable output for
         # the app's ecosystem — never the source tree app-lookup resolved
@@ -247,6 +257,7 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           REF: ${{ inputs.ref }}
           SHA: ${{ steps.checkout.outputs.sha }}
+          DOCKERFILE: ${{ steps.app.outputs.dockerfile }}
         run: |
           $lines = @(
             '## Release candidate created',
@@ -259,4 +270,5 @@ jobs:
             "| Tag | $env:TAG |",
             "| Built from | $env:REF ($env:SHA) |"
           )
+          if ($env:DOCKERFILE) { $lines += "| Dockerfile | $env:DOCKERFILE |" }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY

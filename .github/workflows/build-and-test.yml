@@ -119,6 +119,16 @@ jobs:
       - name: Build legacy .NET application
         if: ${{ matrix.ecosystem == 'dotnet' && matrix.projectSystem == 'legacy-msbuild' }}
         run: msbuild "${{ matrix.projectFile }}" /t:Build /p:Configuration=Release
+      - name: Build Docker container
+        # Dockerfile discovery is scoped to the selected application's own
+        # directory. The repository root remains the build context so images
+        # can COPY shared packages or projects from elsewhere in a monorepo.
+        if: ${{ matrix.dockerfile != '' }}
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          IMAGE_TAG: ${{ matrix.id }}:${{ github.sha }}
+        shell: pwsh
+        run: docker build --file "$env:DOCKERFILE" --tag "$env:IMAGE_TAG" .
       - name: Publish build and test result
         if: ${{ always() }}
         shell: pwsh
@@ -129,6 +139,7 @@ jobs:
           APPLICATION_NAME: ${{ matrix.name }}
           APPLICATION_PATH: ${{ matrix.path }}
           ECOSYSTEM: ${{ matrix.ecosystem }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
           RUNNER: self-hosted
           PROJECT_FILE: ${{ matrix.projectFile }}
         run: |
@@ -145,6 +156,7 @@ jobs:
             "| Runner | $env:RUNNER |"
           )
           if ($env:PROJECT_FILE) { $lines += "| Project file | $env:PROJECT_FILE |" }
+          if ($env:DOCKERFILE) { $lines += "| Dockerfile | $env:DOCKERFILE |" }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
 

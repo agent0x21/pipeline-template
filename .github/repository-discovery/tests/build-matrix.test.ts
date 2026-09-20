@@ -46,8 +46,8 @@ describe('build matrix CLI', () => {
     const result = matrixFor([legacy.id, react.id, react.id]);
     expect(result.hasAffected).toBe('true');
     expect(result.matrix.include).toEqual([
-      { id: react.id, name: react.name, path: react.path, ecosystem: 'node', projectSystem: 'npm', projectFile: '', platform: 'any', tools: react.buildRequirements.tools },
-      { id: legacy.id, name: legacy.name, path: legacy.path, ecosystem: 'dotnet', projectSystem: 'legacy-msbuild', projectFile: legacy.files.find(file => file.endsWith('.csproj')), platform: 'windows', tools: legacy.buildRequirements.tools },
+      { id: react.id, name: react.name, path: react.path, ecosystem: 'node', projectSystem: 'npm', projectFile: '', dockerfile: react.dockerfile, platform: 'any', tools: react.buildRequirements.tools },
+      { id: legacy.id, name: legacy.name, path: legacy.path, ecosystem: 'dotnet', projectSystem: 'legacy-msbuild', projectFile: legacy.files.find(file => file.endsWith('.csproj')), dockerfile: legacy.dockerfile, platform: 'windows', tools: legacy.buildRequirements.tools },
     ]);
   });
 

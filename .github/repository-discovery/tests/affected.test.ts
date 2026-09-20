@@ -21,4 +21,9 @@ describe('affected application discovery', () => {
     const result = affectedFromFiles(discoverDependencies(fixture), ['apps/portal/src/App.tsx']);
     expect(result.affectedApplications).toContainEqual({ id: 'apps-portal', reason: 'direct-file-change', changedFiles: ['apps/portal/src/App.tsx'] });
   });
+
+  it('selects a Docker-enabled application when its Dockerfile changes', () => {
+    const result = affectedFromFiles(discoverDependencies(fixture), ['apps/portal/Dockerfile']);
+    expect(result.affectedApplications).toContainEqual({ id: 'apps-portal', reason: 'direct-file-change', changedFiles: ['apps/portal/Dockerfile'] });
+  });
 });

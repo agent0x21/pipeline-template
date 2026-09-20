@@ -17,6 +17,8 @@ export interface Application {
   targetFrameworks: string[];
   buildRequirements: BuildRequirements;
   files: string[];
+  /** Repository-relative Dockerfile located in this application's directory, if present. */
+  dockerfile: string;
 }
 
 export interface DiscoveryManifest {

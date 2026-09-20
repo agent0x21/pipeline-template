@@ -19,5 +19,5 @@ if (!application) {
 const projectFile = application.files.find((file) => /\.(csproj|fsproj|vbproj)$/i.test(file)) ?? '';
 fs.appendFileSync(
   output,
-  `name=${application.name}\npath=${application.path || '.'}\necosystem=${application.ecosystem}\nproject_system=${application.projectSystem}\nproject_file=${projectFile}\nplatform=${application.buildRequirements.platform}\n`,
+  `name=${application.name}\npath=${application.path || '.'}\necosystem=${application.ecosystem}\nproject_system=${application.projectSystem}\nproject_file=${projectFile}\ndockerfile=${application.dockerfile}\nplatform=${application.buildRequirements.platform}\n`,
 );

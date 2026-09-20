@@ -9,7 +9,9 @@ describe('discover', () => {
     const apps = discover(fixture).applications;
     expect(apps.map((app) => app.subtype)).toEqual(['react', 'web', 'winforms', 'wpf', 'aspnet-framework', 'library-or-service']);
     expect(apps.find((app) => app.subtype === 'wpf')?.buildRequirements).toEqual({ platform: 'windows', tools: ['msbuild'] });
-    expect(apps.find((app) => app.subtype === 'react')?.files).toEqual(['apps/portal/package.json']);
+    const react = apps.find((app) => app.subtype === 'react');
+    expect(react?.files).toEqual(['apps/portal/package.json']);
+    expect(react?.dockerfile).toBe('apps/portal/Dockerfile');
   });
   it('emits stable output independent of filesystem enumeration order', () => {
     const first = JSON.stringify(discover(fixture));

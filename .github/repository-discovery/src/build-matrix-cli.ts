@@ -18,6 +18,7 @@ const include = discovery.applications.filter((application) => selected.has(appl
   ecosystem: application.ecosystem,
   projectSystem: application.projectSystem,
   projectFile: application.files.find((file) => /\.(csproj|fsproj|vbproj)$/i.test(file)) ?? '',
+  dockerfile: application.dockerfile,
   platform: application.buildRequirements.platform,
   tools: application.buildRequirements.tools,
 }));

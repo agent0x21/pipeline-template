@@ -18,7 +18,8 @@ export class DotnetDetector implements Detector {
       const windows = isWpf || isWinForms || classicAspNet || /net[0-4]\d|netstandard/i.test(xml) && !sdkStyle;
       const frameworks = uniqueSorted([...xmlValues(xml, 'TargetFramework'), ...xmlValues(xml, 'TargetFrameworks').flatMap((v) => v.split(';')), ...xmlValues(xml, 'TargetFrameworkVersion').map((v) => v.replace(/^v/i, 'net'))]);
       const related = files.filter((f) => path.posix.dirname(repoPath(root, f)) === appPath && /(^|\/)(packages\.config|web\.config)$/i.test(repoPath(root, f))).map((f) => repoPath(root, f));
-      return { id: idFor(projectRelative), name: path.posix.basename(projectRelative, path.posix.extname(projectRelative)), path: appPath, ecosystem: 'dotnet', type: 'dotnet', subtype, projectSystem: sdkStyle ? 'sdk-style' : 'legacy-msbuild', targetFrameworks: frameworks, buildRequirements: { platform: windows ? 'windows' : 'any', tools: windows ? ['msbuild'] : ['dotnet'] }, files: uniqueSorted([projectRelative, ...related]) };
+      const dockerfile = files.map((file) => repoPath(root, file)).find((file) => path.posix.dirname(file) === appPath && path.posix.basename(file).toLowerCase() === 'dockerfile') ?? '';
+      return { id: idFor(projectRelative), name: path.posix.basename(projectRelative, path.posix.extname(projectRelative)), path: appPath, ecosystem: 'dotnet', type: 'dotnet', subtype, projectSystem: sdkStyle ? 'sdk-style' : 'legacy-msbuild', targetFrameworks: frameworks, buildRequirements: { platform: windows ? 'windows' : 'any', tools: windows ? ['msbuild'] : ['dotnet'] }, files: uniqueSorted([projectRelative, ...related]), dockerfile };
     });
   }
 }
