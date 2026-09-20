@@ -43,7 +43,15 @@ describe('createRelease', () => {
     const result = await createRelease(config, 'portal/v1.1.0', 'abc123', 'portal 1.1.0');
     expect(result).toEqual(created);
     const [, init] = fetchMock.mock.calls[0];
-    expect(JSON.parse(init.body)).toEqual({ tag_name: 'portal/v1.1.0', target_commitish: 'abc123', name: 'portal 1.1.0', generate_release_notes: false });
+    expect(JSON.parse(init.body)).toEqual({ tag_name: 'portal/v1.1.0', target_commitish: 'abc123', name: 'portal 1.1.0', prerelease: false, generate_release_notes: false });
+  });
+
+  it('marks the release as a prerelease when requested', async () => {
+    const created = { id: 2, tag_name: 'portal/v1.1.0-rc.1', upload_url: 'https://uploads.example.test/2{?name}', assets: [] };
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => created });
+    await createRelease(config, 'portal/v1.1.0-rc.1', 'abc123', 'portal 1.1.0-rc.1', true);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toMatchObject({ prerelease: true });
   });
 
   it('throws with the response body on failure', async () => {

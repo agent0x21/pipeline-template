@@ -230,7 +230,8 @@ jobs:
             --app-id $env:ARTIFACT_APP_ID `
             --version $env:ARTIFACT_VERSION `
             --app-directory $env:ARTIFACT_DIRECTORY `
-            --ref $env:ARTIFACT_REF
+            --ref $env:ARTIFACT_REF `
+            --prerelease
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }

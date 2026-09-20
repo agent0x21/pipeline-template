@@ -25,11 +25,17 @@ export async function findReleaseByTag(config: GitHubReleasesConfig, tag: string
  * this call if it doesn't already exist, so nothing else needs to `git tag` /
  * `git push` separately.
  */
-export async function createRelease(config: GitHubReleasesConfig, tag: string, targetCommitish: string, name: string): Promise<Release> {
+export async function createRelease(
+  config: GitHubReleasesConfig,
+  tag: string,
+  targetCommitish: string,
+  name: string,
+  prerelease = false,
+): Promise<Release> {
   const response = await fetch(`${config.apiUrl}/repos/${config.repository}/releases`, {
     method: 'POST',
     headers: { ...authHeaders(config), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tag_name: tag, target_commitish: targetCommitish, name, generate_release_notes: false }),
+    body: JSON.stringify({ tag_name: tag, target_commitish: targetCommitish, name, prerelease, generate_release_notes: false }),
   });
   if (!response.ok) throw new Error(`Failed to create release "${tag}" (${response.status}): ${await response.text()}`);
   return response.json() as Promise<Release>;

@@ -50,8 +50,14 @@ describe('artifact-publish CLI', () => {
     await run(['--app-id', 'portal', '--version', '1.0.0', '--app-directory', '/tmp/app', '--ref', 'abc123']);
 
     expect(mocks.createZip).toHaveBeenCalledWith('/tmp/app', expect.stringContaining('portal-1.0.0.zip'));
-    expect(mocks.createRelease).toHaveBeenCalledWith(expect.anything(), 'portal/v1.0.0', 'abc123', 'portal 1.0.0');
+    expect(mocks.createRelease).toHaveBeenCalledWith(expect.anything(), 'portal/v1.0.0', 'abc123', 'portal 1.0.0', false);
     expect(mocks.uploadAsset).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'portal-1.0.0.zip', expect.anything(), 'application/zip');
+  });
+
+  it('marks a newly created release as a prerelease when --prerelease is supplied', async () => {
+    await run(['--app-id', 'portal', '--version', '1.0.0-rc.1', '--app-directory', '/tmp/app', '--ref', 'abc123', '--prerelease']);
+
+    expect(mocks.createRelease).toHaveBeenCalledWith(expect.anything(), 'portal/v1.0.0-rc.1', 'abc123', 'portal 1.0.0-rc.1', true);
   });
 
   it('requires --app-id, --version, --app-directory, and --ref', async () => {

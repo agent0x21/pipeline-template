@@ -11,6 +11,7 @@ const appId = value('--app-id');
 const version = value('--version');
 const appDirectory = value('--app-directory');
 const ref = value('--ref');
+const prerelease = args.includes('--prerelease');
 const repository = process.env.GITHUB_REPOSITORY;
 const token = process.env.GITHUB_TOKEN;
 if (!appId || !version || !appDirectory || !ref) throw new Error('artifact-publish requires --app-id, --version, --app-directory, and --ref.');
@@ -24,7 +25,7 @@ const archivePath = path.join(os.tmpdir(), assetName);
 if (fs.existsSync(archivePath)) fs.rmSync(archivePath);
 createZip(appDirectory, archivePath);
 
-const release = (await findReleaseByTag(config, tag)) ?? (await createRelease(config, tag, ref, `${appId} ${version}`));
+const release = (await findReleaseByTag(config, tag)) ?? (await createRelease(config, tag, ref, `${appId} ${version}`, prerelease));
 const data = fs.readFileSync(archivePath);
 await uploadAsset(config, release, assetName, data, 'application/zip');
 fs.rmSync(archivePath);
