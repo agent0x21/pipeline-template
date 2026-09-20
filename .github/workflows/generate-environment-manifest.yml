@@ -1,0 +1,90 @@
+name: Release — Generate environment manifest
+run-name: "Update environment manifest after ${{ github.event.workflow_run.name || 'manual request' }}"
+
+# A successful RC or production promotion changes the latest candidate/final
+# version that should be considered for deployment. Generate the manifest only
+# after the parent workflow has completed, so all of its tags and releases are
+# visible to this workflow.
+on:
+  workflow_run:
+    workflows:
+      - Release — Create candidates automatically from main
+      - Release — Create a candidate manually
+      - Release — Promote a candidate to production
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: self-hosted
+    # Updating the one persistent release asset must not race when separate
+    # candidate workflows finish at nearly the same time.
+    concurrency:
+      group: environment-manifest
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: .github/repository-discovery
+    steps:
+      # workflow_run uses the default branch's workflow definition. The
+      # manifest represents release tags across the repository, not a possibly
+      # short-lived branch snapshot, so always generate from main.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Read project toolchain versions
+        id: toolchain
+        run: node src/toolchain.mjs
+      - uses: actions/setup-node@v7
+        if: ${{ steps.toolchain.outputs.node != '' }}
+        with:
+          node-version: ${{ steps.toolchain.outputs.node }}
+          package-manager-cache: false
+      - uses: pnpm/action-setup@v6
+        if: ${{ steps.toolchain.outputs.pnpm != '' }}
+        with:
+          version: ${{ steps.toolchain.outputs.pnpm }}
+          package_json_file: .github/repository-discovery/package.json
+      - run: pnpm install --frozen-lockfile
+      - name: Generate environment manifest
+        run: >
+          pnpm exec tsx src/environment-manifest-cli.ts --root ../..
+          --output .github/repository-discovery/.pipeline-artifacts/environment-manifest.json
+      - name: Publish the current manifest to GitHub Releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >
+          pnpm exec tsx src/environment-manifest-publish-cli.ts
+          --manifest .pipeline-artifacts/environment-manifest.json
+          --ref "${{ github.sha }}"
+      - name: Upload manifest with this workflow run
+        uses: actions/upload-artifact@v7
+        with:
+          name: environment-manifest
+          path: .github/repository-discovery/.pipeline-artifacts/environment-manifest.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Summarize
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -Raw -LiteralPath '.pipeline-artifacts/environment-manifest.json' | ConvertFrom-Json
+          $lines = @(
+            '## Environment manifest updated',
+            '',
+            'The current JSON is stored as `environment-manifest.json` on the GitHub Release tagged `pipeline/environment-manifest`.',
+            '',
+            '| Environment | Available versions |',
+            '| --- | --- |'
+          )
+          foreach ($environmentName in 'dev', 'qa', 'production') {
+            $entries = @($manifest.environments.$environmentName.psobject.Properties | ForEach-Object {
+              if ($_.Value.state -eq 'available') { "$($_.Name) $($_.Value.version)" } else { "$($_.Name) ($($_.Value.state))" }
+            })
+            $lines += "| $environmentName | $($entries -join '<br>') |"
+          }
+          $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
