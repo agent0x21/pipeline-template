@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRelease, downloadAsset, findReleaseByTag, uploadAsset, type GitHubReleasesConfig, type Release } from '../src/github-releases.js';
+import { createRelease, downloadAsset, findReleaseByTag, updateReleaseBody, uploadAsset, type GitHubReleasesConfig, type Release } from '../src/github-releases.js';
 
 const config: GitHubReleasesConfig = { apiUrl: 'https://api.example.test', repository: 'owner/repo', token: 'test-token' };
 const fetchMock = vi.fn();
@@ -78,6 +78,17 @@ describe('uploadAsset', () => {
     fetchMock.mockResolvedValueOnce({ ok: true }); // upload
     await uploadAsset(config, withAsset, 'portal-1.0.0.tar.gz', Buffer.from('data'), 'application/gzip');
     expect(fetchMock).toHaveBeenNthCalledWith(1, 'https://api.example.test/repos/owner/repo/releases/assets/99', expect.objectContaining({ method: 'DELETE' }));
+  });
+});
+
+describe('updateReleaseBody', () => {
+  it('replaces the existing release body without changing its tag or assets', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true });
+    await updateReleaseBody(config, 5, '# Environment manifest');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.example.test/repos/owner/repo/releases/5',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ body: '# Environment manifest' }) }),
+    );
   });
 });
 

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
-import { createRelease, findReleaseByTag, uploadAsset, type GitHubReleasesConfig } from './github-releases.js';
+import { environmentManifestMarkdown, type EnvironmentManifest } from './environment-manifest.js';
+import { createRelease, findReleaseByTag, updateReleaseBody, uploadAsset, type GitHubReleasesConfig } from './github-releases.js';
 
 const args = process.argv.slice(2);
 const value = (flag: string) => {
@@ -16,5 +17,8 @@ if (!repository || !token) throw new Error('environment-manifest-publish require
 const config: GitHubReleasesConfig = { apiUrl: process.env.GITHUB_API_URL ?? 'https://api.github.com', repository, token };
 const tag = 'pipeline/environment-manifest';
 const release = (await findReleaseByTag(config, tag)) ?? (await createRelease(config, tag, ref, 'Environment manifest'));
-await uploadAsset(config, release, 'environment-manifest.json', fs.readFileSync(manifestPath), 'application/json');
+const data = fs.readFileSync(manifestPath);
+const manifest = JSON.parse(data.toString('utf8')) as EnvironmentManifest;
+await uploadAsset(config, release, 'environment-manifest.json', data, 'application/json');
+await updateReleaseBody(config, release.id, environmentManifestMarkdown(manifest));
 console.log(`Published environment-manifest.json to release "${tag}".`);

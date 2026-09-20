@@ -8,6 +8,8 @@ export interface ApplicationEnvironmentVersion {
   version?: string;
   tag?: string;
   commit?: string;
+  /** Whether this desired version is a pending RC or the production baseline. */
+  source?: 'release-candidate' | 'production-baseline' | 'production';
   reason?: string;
 }
 
@@ -51,17 +53,21 @@ function compareCandidate(a: Candidate, b: Candidate): number {
   return compareVersions(a.parsed, b.parsed) || (a.rc ?? 0) - (b.rc ?? 0) || a.tag.localeCompare(b.tag);
 }
 
-function versionEntry(candidate: Candidate | undefined, commits: ReadonlyMap<string, string>): ApplicationEnvironmentVersion {
+function versionEntry(
+  candidate: Candidate | undefined,
+  commits: ReadonlyMap<string, string>,
+  source: ApplicationEnvironmentVersion['source'],
+): ApplicationEnvironmentVersion {
   if (!candidate) return { state: 'not-released' };
-  return { state: 'available', version: candidate.version, tag: candidate.tag, commit: commits.get(candidate.tag) };
+  return { state: 'available', version: candidate.version, tag: candidate.tag, commit: commits.get(candidate.tag), source };
 }
 
 /**
  * Builds a desired-release inventory from this repository's version tags.
- * QA contains the newest candidate whose final version has not been promoted;
- * production contains the newest final version. DEV is deliberately marked as
- * untracked because this pipeline's dev artifacts are branch/commit outputs,
- * not versioned deployments.
+ * DEV and QA contain the newest candidate whose final version has not been
+ * promoted. When there is no candidate, they intentionally fall back to the
+ * newest production release so each released application has a deployable
+ * version in every environment. Production contains the newest final version.
  */
 export function buildEnvironmentManifest(
   applications: Application[],
@@ -82,12 +88,11 @@ export function buildEnvironmentManifest(
       .sort(compareCandidate)
       .at(-1);
 
-    dev[application.id] = {
-      state: 'not-tracked',
-      reason: 'Development artifacts are branch and commit outputs; no DEV deployment has been recorded.',
-    };
-    qa[application.id] = versionEntry(rc, commits);
-    production[application.id] = versionEntry(final, commits);
+    const nonProductionCandidate = rc ?? final;
+    const nonProductionSource: ApplicationEnvironmentVersion['source'] = rc ? 'release-candidate' : 'production-baseline';
+    dev[application.id] = versionEntry(nonProductionCandidate, commits, nonProductionSource);
+    qa[application.id] = versionEntry(nonProductionCandidate, commits, nonProductionSource);
+    production[application.id] = versionEntry(final, commits, 'production');
   }
 
   return {
@@ -96,4 +101,44 @@ export function buildEnvironmentManifest(
     generatedAt,
     environments: { dev, qa, production },
   };
+}
+
+function displayEntry(entry: ApplicationEnvironmentVersion): { version: string; source: string; tag: string; commit: string } {
+  if (entry.state !== 'available') return { version: '—', source: 'No released version', tag: '—', commit: '—' };
+  const source = entry.source === 'release-candidate'
+    ? 'Release candidate'
+    : entry.source === 'production-baseline'
+      ? 'Production baseline'
+      : 'Production release';
+  return { version: entry.version ?? '—', source, tag: entry.tag ?? '—', commit: entry.commit ?? '—' };
+}
+
+/** Renders the human-readable release notes stored alongside the JSON asset. */
+export function environmentManifestMarkdown(manifest: EnvironmentManifest): string {
+  const sections = (Object.keys(manifest.environments) as Array<keyof EnvironmentManifest['environments']>).map((environment) => {
+    const rows = Object.entries(manifest.environments[environment])
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([application, entry]) => {
+        const display = displayEntry(entry);
+        return `| ${application} | ${display.version} | ${display.source} | \`${display.tag}\` | \`${display.commit}\` |`;
+      });
+    return [
+      `## ${environment.toUpperCase()} versions to deploy`,
+      '',
+      '| Application | Version | Source | Tag | Commit |',
+      '| --- | --- | --- | --- | --- |',
+      ...rows,
+    ].join('\n');
+  });
+  return [
+    '# Environment manifest',
+    '',
+    `Generated: ${manifest.generatedAt}`,
+    '',
+    'DEV and QA use the newest unpromoted release candidate. When no candidate exists, they use the newest production release as the deployment baseline.',
+    '',
+    ...sections,
+    '',
+    'The attached `environment-manifest.json` is the machine-readable source for this table.',
+  ].join('\n');
 }

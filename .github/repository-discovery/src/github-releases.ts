@@ -41,6 +41,16 @@ export async function createRelease(
   return response.json() as Promise<Release>;
 }
 
+/** Replaces the Markdown body of an existing release without altering its tag or assets. */
+export async function updateReleaseBody(config: GitHubReleasesConfig, releaseId: number, body: string): Promise<void> {
+  const response = await fetch(`${config.apiUrl}/repos/${config.repository}/releases/${releaseId}`, {
+    method: 'PATCH',
+    headers: { ...authHeaders(config), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body }),
+  });
+  if (!response.ok) throw new Error(`Failed to update release ${releaseId} (${response.status}): ${await response.text()}`);
+}
+
 async function deleteAsset(config: GitHubReleasesConfig, assetId: number): Promise<void> {
   const response = await fetch(`${config.apiUrl}/repos/${config.repository}/releases/assets/${assetId}`, { method: 'DELETE', headers: authHeaders(config) });
   if (!response.ok && response.status !== 404) throw new Error(`Failed to delete existing asset ${assetId} (${response.status}): ${await response.text()}`);
