@@ -43,7 +43,7 @@ function App() {
       </header>
       <section className="content">
         <p className="eyebrow">WORKSPACE OVERVIEW</p>
-        <h1>Good morning, Jon</h1>
+        <h1>Good morning, Jon!</h1>
         <p className="intro">
           Here&apos;s what&apos;s happening across your workspace today.
         </p>
