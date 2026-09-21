@@ -8,7 +8,7 @@ run-name: "Update environment manifest after ${{ github.event.workflow_run.name 
 on:
   workflow_run:
     workflows:
-      - Release — Create candidates automatically from main
+      - Release — Create candidates from a commit
       - Release — Create a candidate manually
       - Release — Promote a candidate to production
     types: [completed]

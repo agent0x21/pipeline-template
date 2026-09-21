@@ -1,31 +1,26 @@
-name: Release — Create candidates automatically from main
+name: Release — Create candidates from a commit
 
-# Automatically creates a release candidate for every application that has
-# changed since its own last release-candidate build (see src/auto-rc.ts),
-# only after its change has landed on main. A push to main is emitted after a
-# pull request is merged, so release candidates are always built from the
-# merged commit—not from an in-progress pull-request head. This replaces the
-# plain build-affected-applications-manually.yml dispatch that
-# validate-changed-applications.yml would otherwise run for main commits (see
-# the guard in validate-changed-applications.yml) —
-# build-and-publish-release-candidate.yml already builds
-# and tests as part of creating the rc, so main commits are never built twice.
+# Manually creates a release candidate for every application that has changed
+# since its own last release-candidate build (see src/auto-rc.ts), using the
+# supplied commit as the build source. The reusable RC workflow still builds
+# and tests each selected application before publishing it.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full Git commit SHA to evaluate and build release candidates from
+        required: true
+        type: string
 
 permissions:
   contents: write
   packages: write
 
 # Candidate discovery relies on the RC tags created by earlier runs as each
-# application's baseline. Serialize the entire main-push workflow, rather than
-# only its per-app build jobs: otherwise a newer push can do discovery before
-# the older run has published its tags and incorrectly select apps from both
-# pushes. Do not cancel an in-progress run: its tags must be available as the
-# baseline before the next queued main commit performs discovery.
+# application's baseline. Serialize commit-triggered discovery so its selected
+# applications are based on a stable published RC baseline.
 concurrency:
-  group: auto-rc-main-${{ github.ref }}
+  group: rc-discovery
   cancel-in-progress: false
 
 jobs:
@@ -41,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.commit }}
           fetch-depth: 0
       - name: Read project toolchain versions
         id: toolchain
@@ -83,5 +78,5 @@ jobs:
     uses: ./.github/workflows/build-and-publish-release-candidate.yml
     with:
       app_id: ${{ matrix.id }}
-      ref: ${{ github.sha }}
+      ref: ${{ inputs.commit }}
       bump: minor
