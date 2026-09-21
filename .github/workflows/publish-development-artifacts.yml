@@ -76,7 +76,7 @@ jobs:
     name: Build dev-test artifacts (${{ matrix.name }})
     needs: prepare
     if: ${{ needs.prepare.outputs.has_affected == 'true' }}
-    runs-on: [self-hosted, ${{ matrix.runner }}]
+    runs-on: [self-hosted, "${{ matrix.runner }}"]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}

@@ -23,6 +23,7 @@ describe('non-main branch discovery workflow', () => {
   it('runs the affected-app build matrix in the discovery workflow', () => {
     expect(discoveryWorkflow).toContain('build-and-test:');
     expect(discoveryWorkflow).toContain('needs: discover');
+    expect(discoveryWorkflow).toContain('runs-on: [self-hosted, "${{ matrix.runner }}"]');
     expect(discoveryWorkflow).not.toContain('dispatch-build-cli.ts');
   });
 
