@@ -25,7 +25,8 @@ export function discover(root: string, detectors: Detector[] = [new ReactDetecto
   // Keep the established discovery order based on the original path-derived ID.
   // Friendly IDs are intentionally independent from that ordering so adding a
   // friendlier name does not reshuffle matrices or summaries unexpectedly.
-  const applications = applyAutomaticNames(detectors.flatMap((detector) => detector.detect(context)))
+  const applications = applyAutomaticNames(detectors.flatMap((detector) => detector.detect(context))
+    .filter((application) => application.cicd !== false))
     .sort((a, b) => (a.legacyId ?? a.id).localeCompare(b.legacyId ?? b.id));
   return { schemaVersion: 1, generatedBy: 'polyglot-repository-discovery', applications };
 }

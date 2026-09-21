@@ -28,6 +28,8 @@ export interface Application {
   files: string[];
   /** Repository-relative Dockerfile located in this application's directory, if present. */
   dockerfile: string;
+  /** Explicit per-project CI/CD setting, when one was supplied. */
+  cicd?: boolean;
 }
 
 export interface DiscoveryManifest {

@@ -32,9 +32,8 @@ permissions:
 
 jobs:
   version-rc:
-    # Serializes rc creation per application, matching create-release-candidates-from-main.yml's
-    # guard, so a manual dispatch can't race the automatic flow (or another
-    # manual dispatch) for the same application.
+    # Serializes RC creation per application so concurrent manual requests
+    # cannot calculate and publish the same next RC version.
     concurrency:
       group: rc-${{ inputs.app_id }}
     uses: ./.github/workflows/build-and-publish-release-candidate.yml

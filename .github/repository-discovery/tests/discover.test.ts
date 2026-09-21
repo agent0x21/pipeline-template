@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -35,5 +37,42 @@ describe('discover', () => {
     const apps = discover(repoRoot).applications;
     const leaked = apps.filter((app) => app.path.startsWith('.github/repository-discovery/'));
     expect(leaked).toEqual([]);
+  });
+
+  it('honors explicit CI/CD settings while preserving unmarked projects', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'repository-discovery-cicd-'));
+    const write = (relative: string, contents: string) => {
+      const file = path.join(root, relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, contents);
+    };
+    try {
+      write('sdk-enabled/App.csproj', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><CICD>TRUE</CICD></PropertyGroup></Project>');
+      write('sdk-disabled/App.csproj', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><CICD>false</CICD></PropertyGroup></Project>');
+      write('sdk-default/App.csproj', '<Project Sdk="Microsoft.NET.Sdk" />');
+      write('legacy-enabled/App.csproj', '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"><PropertyGroup><TargetFrameworkVersion>v4.0</TargetFrameworkVersion><CICD>true</CICD></PropertyGroup></Project>');
+      write('legacy-disabled/App.csproj', '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003"><PropertyGroup><CICD>False</CICD></PropertyGroup></Project>');
+      write('legacy-default/App.csproj', '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" />');
+      write('react-enabled/package.json', JSON.stringify({ dependencies: { react: '18.0.0' }, cicd: true }));
+      write('react-disabled/package.json', JSON.stringify({ dependencies: { react: '18.0.0' }, cicd: false }));
+      write('react-default/package.json', JSON.stringify({ dependencies: { react: '18.0.0' } }));
+      write('invalid-dotnet/App.csproj', '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><CICD>sometimes</CICD></PropertyGroup></Project>');
+      write('invalid-react/package.json', JSON.stringify({ dependencies: { react: '18.0.0' }, cicd: 'false' }));
+
+      const apps = discover(root).applications;
+      expect(apps.map((app) => app.path)).toEqual([
+        'invalid-dotnet', 'invalid-react', 'legacy-default', 'legacy-enabled', 'react-default', 'react-enabled', 'sdk-default', 'sdk-enabled',
+      ]);
+      expect(apps.find((app) => app.path === 'sdk-enabled')?.cicd).toBe(true);
+      expect(apps.find((app) => app.path === 'legacy-enabled')?.cicd).toBe(true);
+      expect(apps.find((app) => app.path === 'react-enabled')?.cicd).toBe(true);
+      expect(apps.find((app) => app.path === 'sdk-default')?.cicd).toBeUndefined();
+      expect(apps.find((app) => app.path === 'legacy-default')?.cicd).toBeUndefined();
+      expect(apps.find((app) => app.path === 'react-default')?.cicd).toBeUndefined();
+      expect(apps.find((app) => app.path === 'invalid-dotnet')?.cicd).toBeUndefined();
+      expect(apps.find((app) => app.path === 'invalid-react')?.cicd).toBeUndefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
