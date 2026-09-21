@@ -1,35 +1,19 @@
-For **GitHub Deployments** in the current repository, there isn’t a dedicated `gh deployment delete` command, so use `gh api`. GitHub’s API only allows deleting deployments that are inactive when the repo has multiple deployments.
+# Wipe deployments
 
-To delete every deployment that GitHub allows you to delete:
-
-```powershell
-gh api --paginate "/repos/agent0x21/pipeline-template-3/deployments?per_page=100" --jq '.[].id' | ForEach-Object {
-    gh api --method DELETE "/repos/agent0x21/pipeline-template-3/deployments/$_"
-}
-```
-
-You may get `422` errors for deployments that are still considered active. To first mark every deployment inactive, then delete them:
+Delete every deployment GitHub currently allows you to delete:
 
 ```powershell
-$deployments = gh api --paginate "/repos/agent0x21/pipeline-template-3/deployments?per_page=100" --jq '.[].id'
-
-$deployments | ForEach-Object {
-    gh api --method POST "/repos/agent0x21/pipeline-template-3/deployments/$_/statuses" `
-        -f state='inactive'
-}
-
-$deployments | ForEach-Object {
-    gh api --method DELETE "/repos/agent0x21/pipeline-template-3/deployments/$_"
-}
+gh api --paginate "repos/{owner}/{repo}/deployments?per_page=100" --jq '.[].id' | % { gh api --method DELETE "repos/{owner}/{repo}/deployments/$_" }
 ```
 
-The `{owner}` and `{repo}` placeholders are automatically resolved by `gh` from your current repository.
-
-To preview deployments first:
+Mark every deployment inactive, then delete all deployments:
 
 ```powershell
-gh api --paginate "/repos/agent0x21/pipeline-template-3/deployments?per_page=100" `
-    --jq '.[] | [.id, .environment, .ref, .created_at] | @tsv'
+$d = gh api --paginate "repos/{owner}/{repo}/deployments?per_page=100" --jq '.[].id'; $d | % { gh api --method POST "repos/{owner}/{repo}/deployments/$_/statuses" -f state=inactive }; $d | % { gh api --method DELETE "repos/{owner}/{repo}/deployments/$_" }
 ```
 
-One caveat: GitHub specifically restricts deletion of active deployments, so the **mark inactive → delete** version is the one I’d use for a full cleanup.
+Preview deployments:
+
+```powershell
+gh api --paginate "repos/{owner}/{repo}/deployments?per_page=100" --jq '.[] | [.id, .environment, .ref, .created_at] | @tsv'
+```

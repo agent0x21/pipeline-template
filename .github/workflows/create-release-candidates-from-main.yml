@@ -1,4 +1,4 @@
-name: Release — Create candidates from a commit
+name: Generate Release Candidate Artifacts
 
 # Manually creates a release candidate for every application that has changed
 # since its own last release-candidate build (see src/auto-rc.ts), using the

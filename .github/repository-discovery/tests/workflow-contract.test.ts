@@ -36,9 +36,9 @@ describe('non-main branch discovery workflow', () => {
 describe('environment manifest workflow contract', () => {
   it('runs after successful release-candidate and production-promotion workflows', () => {
     expect(environmentManifestWorkflow).toContain('workflow_run:');
-    expect(environmentManifestWorkflow).toContain('Release — Create candidates from a commit');
+    expect(environmentManifestWorkflow).toContain('Generate Release Candidate Artifacts');
     expect(environmentManifestWorkflow).toContain('Release — Create a candidate manually');
-    expect(environmentManifestWorkflow).toContain('Release — Promote a candidate to production');
+    expect(environmentManifestWorkflow).toContain('Promote Release Candidate to Production');
     expect(environmentManifestWorkflow).toContain("github.event.workflow_run.conclusion == 'success'");
   });
 
