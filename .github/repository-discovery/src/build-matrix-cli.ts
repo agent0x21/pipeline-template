@@ -20,6 +20,11 @@ const include = discovery.applications.filter((application) => selected.has(appl
   projectFile: application.files.find((file) => /\.(csproj|fsproj|vbproj)$/i.test(file)) ?? '',
   dockerfile: application.dockerfile,
   platform: application.buildRequirements.platform,
+  // Dockerfiles in this pipeline build Linux OCI images. Route the whole
+  // application matrix entry to a Linux runner so its build, tests, and image
+  // build share a compatible toolchain. Other applications retain the
+  // Windows runner used for legacy MSBuild support.
+  runner: application.dockerfile ? 'linux' : 'windows',
   tools: application.buildRequirements.tools,
 }));
 const output = process.env.GITHUB_OUTPUT;

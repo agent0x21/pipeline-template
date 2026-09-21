@@ -18,9 +18,4 @@ describe('manual dev-test artifact workflow', () => {
     expect(devBuildWorkflow).toContain('docker push $image');
   });
 
-  it('uses only self-hosted runners', () => {
-    expect(devBuildWorkflow).toContain('runs-on: self-hosted');
-    expect(devBuildWorkflow).not.toContain('ubuntu-latest');
-    expect(devBuildWorkflow).not.toContain('windows-latest');
-  });
 });

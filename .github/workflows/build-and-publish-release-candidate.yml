@@ -45,6 +45,8 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      source_sha: ${{ steps.checkout.outputs.sha }}
+      dockerfile: ${{ steps.app.outputs.dockerfile }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -167,16 +169,6 @@ jobs:
       - name: Build legacy .NET application
         if: ${{ steps.app.outputs.ecosystem == 'dotnet' && steps.app.outputs.project_system == 'legacy-msbuild' }}
         run: msbuild "${{ steps.app.outputs.project_file }}" /t:Build /p:Configuration=Release
-      - name: Build Docker container
-        # An image is built only when the discovered application contains a
-        # Dockerfile. Use the repository root as context for monorepo COPYs.
-        if: ${{ steps.app.outputs.dockerfile != '' }}
-        working-directory: ${{ github.workspace }}
-        env:
-          DOCKERFILE: ${{ steps.app.outputs.dockerfile }}
-          IMAGE_TAG: ${{ inputs.app_id }}:${{ steps.version.outputs.version }}
-        shell: pwsh
-        run: docker build --file "$env:DOCKERFILE" --tag "$env:IMAGE_TAG" .
       - name: Determine the artifact directory to publish
         # The published artifact must be the actual deployable output for
         # the app's ecosystem — never the source tree app-lookup resolved
@@ -252,44 +244,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
-      - name: Publish Docker container to GitHub Container Registry
-        # The release artifact and tag are already created above; only then
-        # publish the matching image, when this application has a Dockerfile.
-        if: ${{ success() && steps.app.outputs.dockerfile != '' }}
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          LOCAL_IMAGE: ${{ inputs.app_id }}:${{ steps.version.outputs.version }}
-          IMAGE_TAG: ${{ steps.version.outputs.version }}
-          APPLICATION_ID: ${{ inputs.app_id }}
-        run: |
-          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
-          $application = $env:APPLICATION_ID.ToLowerInvariant()
-          $image = "ghcr.io/$repository/$application`:$env:IMAGE_TAG"
-          $env:GITHUB_TOKEN | docker login ghcr.io --username $env:GITHUB_ACTOR --password-stdin
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          docker tag $env:LOCAL_IMAGE $image
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          docker push $image
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Remove locally built container image
-        # This runner is self-hosted and persistent, so an image built (and,
-        # for a Dockerized app, pushed) above would otherwise accumulate on
-        # its disk indefinitely across releases. Best-effort: the build step
-        # may never have run (no Dockerfile, or an earlier step failed), so a
-        # missing image must not fail an otherwise successful release.
-        if: ${{ always() && steps.app.outputs.dockerfile != '' }}
-        shell: pwsh
-        env:
-          LOCAL_IMAGE: ${{ inputs.app_id }}:${{ steps.version.outputs.version }}
-          IMAGE_TAG: ${{ steps.version.outputs.version }}
-          APPLICATION_ID: ${{ inputs.app_id }}
-        run: |
-          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
-          $application = $env:APPLICATION_ID.ToLowerInvariant()
-          $image = "ghcr.io/$repository/$application`:$env:IMAGE_TAG"
-          docker image rm --force $env:LOCAL_IMAGE $image
-          exit 0
       - name: Summarize
         # Same shell-mismatch hazard as elsewhere in this file: this used to
         # be a bash heredoc with no `shell:`, which silently wrote nothing
@@ -322,3 +276,41 @@ jobs:
           )
           if ($env:DOCKERFILE) { $lines += "| Dockerfile | $env:DOCKERFILE |" }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+  build-and-publish-container:
+    name: Build and publish container image
+    needs: build
+    if: ${{ needs.build.outputs.dockerfile != '' }}
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.build.outputs.source_sha }}
+      - name: Build and publish Docker container
+        env:
+          DOCKERFILE: ${{ needs.build.outputs.dockerfile }}
+          LOCAL_IMAGE: ${{ inputs.app_id }}:${{ needs.build.outputs.version }}
+          IMAGE_TAG: ${{ needs.build.outputs.version }}
+          APPLICATION_ID: ${{ inputs.app_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository="${GITHUB_REPOSITORY,,}"
+          application="${APPLICATION_ID,,}"
+          image="ghcr.io/${repository}/${application}:${IMAGE_TAG}"
+          docker build --file "$DOCKERFILE" --tag "$LOCAL_IMAGE" .
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker tag "$LOCAL_IMAGE" "$image"
+          docker push "$image"
+      - name: Remove locally built container image
+        if: ${{ always() }}
+        env:
+          LOCAL_IMAGE: ${{ inputs.app_id }}:${{ needs.build.outputs.version }}
+          IMAGE_TAG: ${{ needs.build.outputs.version }}
+          APPLICATION_ID: ${{ inputs.app_id }}
+        shell: bash
+        run: |
+          repository="${GITHUB_REPOSITORY,,}"
+          application="${APPLICATION_ID,,}"
+          docker image rm --force "$LOCAL_IMAGE" "ghcr.io/${repository}/${application}:${IMAGE_TAG}" || true

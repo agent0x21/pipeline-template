@@ -45,6 +45,11 @@ jobs:
     defaults:
       run:
         working-directory: .github/repository-discovery
+    outputs:
+      app_id: ${{ steps.promote.outputs.app_id }}
+      rc_version: ${{ steps.promote.outputs.rc_version }}
+      final_version: ${{ steps.promote.outputs.final_version }}
+      dockerfile: ${{ steps.app.outputs.dockerfile }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -142,50 +147,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
-      - name: Promote the release-candidate container image
-        # Mirrors "no rebuild" above: this re-tags and pushes the exact image
-        # bytes already published for the rc tag under the final version — it
-        # is never rebuilt from source. Skipped for applications with no
-        # Dockerfile (steps.app.outputs.dockerfile is only set when one exists).
-        if: ${{ steps.app.outputs.dockerfile != '' }}
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          APPLICATION_ID: ${{ steps.promote.outputs.app_id }}
-          RC_VERSION: ${{ steps.promote.outputs.rc_version }}
-          FINAL_VERSION: ${{ steps.promote.outputs.final_version }}
-        run: |
-          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
-          $application = $env:APPLICATION_ID.ToLowerInvariant()
-          $rcImage = "ghcr.io/$repository/$application`:$env:RC_VERSION"
-          $finalImage = "ghcr.io/$repository/$application`:$env:FINAL_VERSION"
-          $env:GITHUB_TOKEN | docker login ghcr.io --username $env:GITHUB_ACTOR --password-stdin
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          docker pull $rcImage
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          docker tag $rcImage $finalImage
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          docker push $finalImage
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Remove locally cached container images
-        # This runner is self-hosted and persistent, so images pulled and
-        # tagged above would otherwise accumulate on its disk indefinitely
-        # across releases. Best-effort: nothing above runs at all for a
-        # non-Dockerized application, so a missing image must not fail an
-        # otherwise successful promotion.
-        if: ${{ always() && steps.app.outputs.dockerfile != '' }}
-        shell: pwsh
-        env:
-          APPLICATION_ID: ${{ steps.promote.outputs.app_id }}
-          RC_VERSION: ${{ steps.promote.outputs.rc_version }}
-          FINAL_VERSION: ${{ steps.promote.outputs.final_version }}
-        run: |
-          $repository = $env:GITHUB_REPOSITORY.ToLowerInvariant()
-          $application = $env:APPLICATION_ID.ToLowerInvariant()
-          $rcImage = "ghcr.io/$repository/$application`:$env:RC_VERSION"
-          $finalImage = "ghcr.io/$repository/$application`:$env:FINAL_VERSION"
-          docker image rm --force $rcImage $finalImage
-          exit 0
       - name: Summarize
         shell: pwsh
         env:
@@ -216,3 +177,38 @@ jobs:
             $lines += "| Container image | ghcr.io/$repository/${application}:$env:FINAL_VERSION |"
           }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+  promote-container:
+    name: Promote container image
+    needs: promote
+    if: ${{ needs.promote.outputs.dockerfile != '' }}
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Retag and push the release-candidate container image
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          APPLICATION_ID: ${{ needs.promote.outputs.app_id }}
+          RC_VERSION: ${{ needs.promote.outputs.rc_version }}
+          FINAL_VERSION: ${{ needs.promote.outputs.final_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository="${GITHUB_REPOSITORY,,}"
+          application="${APPLICATION_ID,,}"
+          rc_image="ghcr.io/${repository}/${application}:${RC_VERSION}"
+          final_image="ghcr.io/${repository}/${application}:${FINAL_VERSION}"
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker pull "$rc_image"
+          docker tag "$rc_image" "$final_image"
+          docker push "$final_image"
+      - name: Remove locally cached container images
+        if: ${{ always() }}
+        env:
+          APPLICATION_ID: ${{ needs.promote.outputs.app_id }}
+          RC_VERSION: ${{ needs.promote.outputs.rc_version }}
+          FINAL_VERSION: ${{ needs.promote.outputs.final_version }}
+        shell: bash
+        run: |
+          repository="${GITHUB_REPOSITORY,,}"
+          application="${APPLICATION_ID,,}"
+          docker image rm --force "ghcr.io/${repository}/${application}:${RC_VERSION}" "ghcr.io/${repository}/${application}:${FINAL_VERSION}" || true
