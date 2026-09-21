@@ -51,6 +51,7 @@ function App() {
           <div>
             <h2>Your workspace is ready.</h2>
             <p>Connect your first pipeline and keep every handoff moving!</p>
+            <p>Jon was here!</p>
           </div>
           <span className="sparkle">✦</span>
         </section>
