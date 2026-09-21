@@ -1,4 +1,4 @@
-name: Release — Promote a candidate to production
+name: Promote Release Candidate to Production
 
 on:
   workflow_dispatch:

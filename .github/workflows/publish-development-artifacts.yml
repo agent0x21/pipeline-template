@@ -1,4 +1,4 @@
-name: Development — Publish artifacts from a validated branch
+name: Generate Development Artifacts
 run-name: "Dev-test artifacts from validation run ${{ inputs.source_run_id }}"
 
 on:

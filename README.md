@@ -78,9 +78,9 @@ After installation, use this sequence to confirm the setup:
 
 1. Push a small change to a non-`main` branch and confirm **Validation — Validate changed applications** discovers and builds the expected application(s).
 2. Open a pull request and confirm the same affected-application validation runs. Fork pull requests intentionally run discovery only, protecting the self-hosted runner from untrusted code.
-3. From Actions, run `Release — Create candidates from a commit` and supply the full commit SHA. It selects applications changed since their own last RC and pauses at the `release-candidate` approval gate.
+3. From Actions, run `Generate Release Candidate Artifacts` and supply the full commit SHA. It selects applications changed since their own last RC and pauses at the `release-candidate` approval gate.
 4. Approve the RC, then confirm it produces a prerelease in **Releases** and, for Docker applications, a matching GHCR image.
-5. QA test that RC. Start **Release — Promote a candidate to production** manually with the RC tag, approve the `qa` and `production` gates, and confirm the final release and deployment appear in GitHub.
+5. QA test that RC. Start **Promote Release Candidate to Production** manually with the RC tag, approve the `qa` and `production` gates, and confirm the final release and deployment appear in GitHub.
 
 If an application is not discovered, first run the validation workflow and inspect its job summary. It lists discovered application paths, IDs, project systems, target frameworks, and tooling requirements.
 
@@ -90,10 +90,10 @@ If an application is not discovered, first run the validation workflow and inspe
 | --- | --- | --- |
 | `Validation — Validate changed applications` | Pushes and pull requests | Discovers applications and builds/tests affected applications. |
 | `Validation — Build affected applications manually` | A manual validation run | Builds a selected discovered set without creating a release. |
-| `Release — Create candidates from a commit` | Manual run with a full commit SHA | Queues RCs for applications changed at that commit; each build waits for release-candidate approval. |
+| `Generate Release Candidate Artifacts` | Manual run with a full commit SHA | Queues RCs for applications changed at that commit; each build waits for release-candidate approval. |
 | `Release — Create a candidate manually` | Hotfixes, explicit bump levels, or a specific ref | Queues an approved RC build for one application. |
-| `Release — Publish development artifacts` | Testing a successful non-`main` validation result | Rebuilds that result's affected applications as temporary dev-test artifacts; does not version or create a release. |
-| `Release — Promote a candidate to production` | After QA validates an RC on `main` | Requires QA then production approval, promotes the tested bytes to final, and records the production deployment. |
+| `Generate Development Artifacts` | Testing a successful non-`main` validation result | Rebuilds that result's affected applications as temporary dev-test artifacts; does not version or create a release. |
+| `Promote Release Candidate to Production` | After QA validates an RC on `main` | Requires QA then production approval, promotes the tested bytes to final, and records the production deployment. |
 | `Release — Generate environment manifest` | Automatically after a successful RC or production promotion; also manually | Publishes the current QA and production release inventory as JSON. |
 
 ## Local maintenance and verification
@@ -200,7 +200,7 @@ Create a `PRODUCTION_URL` environment variable in the `production` environment w
 
 1. A push to `main`, or a manual candidate request, queues the release-candidate build. It waits for a `release-candidate` approval before it consumes the runner or creates a release candidate.
 2. Once the candidate passes build and tests, QA tests that published candidate.
-3. A user with write access manually starts **Release — Promote a candidate to production** in the Actions tab and supplies the RC tag.
+3. A user with write access manually starts **Promote Release Candidate to Production** in the Actions tab and supplies the RC tag.
 4. The run waits for `qa` approval. After QA approves it, it independently waits for `production` approval.
 5. Only after production approval does the pipeline validate the tag is merged to `main`, create the final release/tag, and promote the exact RC artifact and container image. The production job is recorded in GitHub's **Deployments** view and links to `PRODUCTION_URL`.
 
