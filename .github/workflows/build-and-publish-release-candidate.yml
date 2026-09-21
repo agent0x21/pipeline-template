@@ -64,7 +64,7 @@ jobs:
           "sha=$sha" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
       - name: Read project toolchain versions
         id: toolchain
-        run: node src/toolchain.mjs
+        run: pwsh -NoProfile -File src/toolchain.ps1
       - uses: actions/setup-node@v7
         if: ${{ steps.toolchain.outputs.node != '' }}
         with:
@@ -95,7 +95,7 @@ jobs:
         id: app_toolchain
         env:
           PROJECT_PATH: ${{ steps.app.outputs.path }}
-        run: node src/toolchain.mjs
+        run: pwsh -NoProfile -File src/toolchain.ps1
       - uses: actions/setup-node@v7
         if: ${{ steps.app.outputs.ecosystem == 'node' && steps.app_toolchain.outputs.node != '' }}
         with:

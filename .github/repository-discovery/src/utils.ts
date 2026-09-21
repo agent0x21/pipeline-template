@@ -53,7 +53,7 @@ export function xmlPropertyValues(xml: string, propertyName: string): string[] {
     if (!token || token.startsWith('?') || token.startsWith('!')) continue;
     if (token.startsWith('/')) {
       const element = stack.pop();
-      if (element?.name === propertyName) values.push(element.text.trim());
+      if (element?.name.toLowerCase() === propertyName.toLowerCase()) values.push(element.text.trim());
       continue;
     }
     const separator = token.search(/[\s/]/);
@@ -70,7 +70,7 @@ export function cicdSetting(values: string[], source: string): boolean | undefin
   if (!values.length) return undefined;
   const normalized = values.map((value) => value.trim().toLowerCase());
   if (normalized.some((value) => value !== 'true' && value !== 'false') || new Set(normalized).size !== 1) {
-    process.stderr.write(`Warning: ignoring invalid or conflicting CICD setting in ${source}; preserving automatic discovery.\n`);
+    process.stderr.write(`Warning: ignoring invalid or conflicting cicd setting in ${source}; preserving automatic discovery.\n`);
     return undefined;
   }
   return normalized[0] === 'true';

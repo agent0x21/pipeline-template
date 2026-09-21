@@ -38,7 +38,7 @@ jobs:
           ref: ${{ inputs.source_sha }}
       - name: Read project toolchain versions
         id: toolchain
-        run: node src/toolchain.mjs
+        run: pwsh -NoProfile -File src/toolchain.ps1
       - uses: actions/setup-node@v7
         if: ${{ steps.toolchain.outputs.node != '' }}
         with:
@@ -84,7 +84,7 @@ jobs:
         id: toolchain
         env:
           PROJECT_PATH: ${{ matrix.path }}
-        run: node .github/repository-discovery/src/toolchain.mjs
+        run: pwsh -NoProfile -File .github/repository-discovery/src/toolchain.ps1
       - uses: actions/setup-node@v7
         if: ${{ matrix.ecosystem == 'node' && steps.toolchain.outputs.node != '' }}
         with:

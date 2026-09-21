@@ -52,7 +52,7 @@ jobs:
           fetch-depth: 0
       - name: Read project toolchain versions
         id: toolchain
-        run: node src/toolchain.mjs
+        run: pwsh -NoProfile -File src/toolchain.ps1
       - uses: actions/setup-node@v7
         if: ${{ steps.toolchain.outputs.node != '' }}
         with:

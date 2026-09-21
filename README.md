@@ -6,14 +6,14 @@ The pipeline deliberately keeps its implementation, Node dependencies, lockfile,
 
 ## What the pipeline does
 
-| Capability                    | How it works                                                                                                                              |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Application discovery         | Detects React/Node applications and modern or legacy .NET projects, including their platform and tooling needs.                           |
-| Change-aware validation       | Finds direct and local-dependency changes, then builds and tests only the affected applications on pull requests and non-`main` branches. |
-| Independent versioning        | Maintains a SemVer history for each application using Git tags such as `portal/v1.2.0-rc.1` and `portal/v1.2.0`.                          |
-| Release candidates            | Builds, tests, packages, and publishes each changed application to a GitHub Release; Docker-enabled applications are also pushed to GHCR. |
-| Controlled production release | Promotes—not rebuilds—the exact RC artifact QA tested, after independent QA and production approvals.                                     |
-| Deployment visibility         | Records a successful production promotion in GitHub's **Deployments** view and links it to the configured production URL.                 |
+| Capability | How it works |
+| --- | --- |
+| Application discovery | Detects React/Node applications and modern or legacy .NET projects, including their platform and tooling needs. |
+| Change-aware validation | Finds direct and local-dependency changes, then builds and tests only the affected applications on pull requests and non-`main` branches. |
+| Independent versioning | Maintains a SemVer history for each application using Git tags such as `portal/v1.2.0-rc.1` and `portal/v1.2.0`. |
+| Release candidates | Builds, tests, packages, and publishes each changed application to a GitHub Release; Docker-enabled applications are also pushed to GHCR. |
+| Controlled production release | Promotes—not rebuilds—the exact RC artifact QA tested, after independent QA and production approvals. |
+| Deployment visibility | Records a successful production promotion in GitHub's **Deployments** view and links it to the configured production URL. |
 
 ## Before you install it
 
@@ -21,7 +21,7 @@ The target repository needs the following:
 
 - A GitHub repository with Actions enabled.
 - At least one trusted, persistent **self-hosted runner**. Every job in this pipeline intentionally runs on `self-hosted`; no GitHub-hosted runner is used.
-- Git, Node.js, and `tar` on the runner. Node must be available before the pipeline can inspect the repository's requested tool versions.
+- Git, PowerShell 7 (`pwsh`), and `tar` on the runner. The pipeline uses PowerShell to inspect requested tool versions before installing Node.js. If a repository does not declare a Node or pnpm version, the corresponding tool must already be installed on the runner.
 - Docker CLI and a reachable Docker daemon for repositories containing applications with a `Dockerfile`.
 - The relevant application tooling on the runner, such as a .NET SDK, Visual Studio/MSBuild for legacy .NET Framework projects, and any required platform SDKs.
 - Permission for the Actions `GITHUB_TOKEN` to write repository contents and packages. The workflows request these permissions, but an organization or repository policy can still prevent them from being granted.
@@ -58,7 +58,7 @@ Discovery remains automatic by default. To explicitly retain a detected project 
 </PropertyGroup>
 ```
 
-To exclude a detected .NET project, use `<cicd>false</cicd>` instead. The setting is case-insensitive and works with the legacy MSBuild XML namespace as well as SDK-style project files.
+To exclude a detected .NET project, use `<cicd>false</cicd>` instead. The setting value is case-insensitive and works with the legacy MSBuild XML namespace as well as SDK-style project files. The earlier uppercase `<CICD>` spelling is also accepted for compatibility.
 
 For a detected React/JavaScript application, use a JSON boolean in its `package.json`:
 
@@ -86,15 +86,15 @@ If an application is not discovered, first run the validation workflow and inspe
 
 ## Workflow map
 
-| Workflow                                            | When to use it                                                             | Result                                                                                                              |
-| --------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `Validation — Validate changed applications`        | Pushes and pull requests                                                   | Discovers applications and builds/tests affected applications.                                                      |
-| `Validation — Build affected applications manually` | A manual validation run                                                    | Builds a selected discovered set without creating a release.                                                        |
-| `Release — Create candidates from a commit`         | Manual run with a full commit SHA                                          | Queues RCs for applications changed at that commit; each build waits for release-candidate approval.                |
-| `Release — Create a candidate manually`             | Hotfixes, explicit bump levels, or a specific ref                          | Queues an approved RC build for one application.                                                                    |
-| `Release — Publish development artifacts`           | Testing a successful non-`main` validation result                          | Rebuilds that result's affected applications as temporary dev-test artifacts; does not version or create a release. |
-| `Release — Promote a candidate to production`       | After QA validates an RC on `main`                                         | Requires QA then production approval, promotes the tested bytes to final, and records the production deployment.    |
-| `Release — Generate environment manifest`           | Automatically after a successful RC or production promotion; also manually | Publishes the current QA and production release inventory as JSON.                                                  |
+| Workflow | When to use it | Result |
+| --- | --- | --- |
+| `Validation — Validate changed applications` | Pushes and pull requests | Discovers applications and builds/tests affected applications. |
+| `Validation — Build affected applications manually` | A manual validation run | Builds a selected discovered set without creating a release. |
+| `Release — Create candidates from a commit` | Manual run with a full commit SHA | Queues RCs for applications changed at that commit; each build waits for release-candidate approval. |
+| `Release — Create a candidate manually` | Hotfixes, explicit bump levels, or a specific ref | Queues an approved RC build for one application. |
+| `Release — Publish development artifacts` | Testing a successful non-`main` validation result | Rebuilds that result's affected applications as temporary dev-test artifacts; does not version or create a release. |
+| `Release — Promote a candidate to production` | After QA validates an RC on `main` | Requires QA then production approval, promotes the tested bytes to final, and records the production deployment. |
+| `Release — Generate environment manifest` | Automatically after a successful RC or production promotion; also manually | Publishes the current QA and production release inventory as JSON. |
 
 ## Local maintenance and verification
 
@@ -151,7 +151,7 @@ On push runs, the included workflow adds an **Applications to rebuild and versio
 
 Tool versions come from the consuming project. Discovery and matrix preparation read the repository root; application builds search from the application directory up to the root, with nearer declarations taking precedence. Node is read from `.nvmrc`, `.node-version`, then `package.json` (`volta.node` or `engines.node`). pnpm is read from `packageManager`, `devEngines.packageManager`, or `engines.pnpm`. The nearest `global.json` selects the .NET SDK, and .NET commands run from the application directory so SDK resolution honors that file.
 
-When a version is not declared, the pipeline keeps the self-hosted runner's installed tool instead of choosing a fixed version. The runner needs Node available to read these settings before dependency installation, and pnpm installed if no pnpm version is declared. Selected versions must support the pipeline's dependencies and lockfile; incompatible versions fail validation rather than being silently replaced. Node application builds currently use pnpm; npm/Yarn declarations do not select a different package manager. MSBuild continues to use the installed Visual Studio toolchain.
+When a version is not declared, the pipeline keeps the self-hosted runner's installed tool instead of choosing a fixed version. PowerShell reads these settings before dependency installation, so Node does not need to be preinstalled when the repository declares its Node version. pnpm must be installed on the runner if no pnpm version is declared. Selected versions must support the pipeline's dependencies and lockfile; incompatible versions fail validation rather than being silently replaced. Node application builds currently use pnpm; npm/Yarn declarations do not select a different package manager. MSBuild continues to use the installed Visual Studio toolchain.
 
 `Validation — Validate changed applications` has two dependent jobs: it first discovers applications and selects the affected set, then builds and tests that set in a matrix within the same workflow run. Ordinary pushes and pull requests include only affected applications; manual runs and a branch's first push select every discovered application for full validation. All jobs run on `self-hosted`. Each selected Node application runs its optional `build` and `test` package scripts. SDK-style .NET projects run `dotnet build` and `dotnet test`; legacy MSBuild projects run `msbuild` when the self-hosted runner provides it. When an application directory contains a file named `Dockerfile`, the selected application's build also runs `docker build` with that Dockerfile and the repository root as context, then removes the temporary image. Automatic non-`main` branch runs do not retain or publish Docker images or any other deployable artifact. The self-hosted runner must therefore have a working Docker CLI and daemon for Docker-enabled applications. To preserve the existing security boundary, pull requests from forks run discovery only; the build matrix runs for branch pushes and same-repository pull requests. The separate `Validation — Build affected applications manually` workflow remains available for explicit manual runs.
 
@@ -165,12 +165,13 @@ Application names require no configuration. Discovery uses the application direc
 
 If two applications have the same directory name, discovery automatically includes parent directory segments to keep their IDs distinct. If they are still in the same directory, it falls back to the full project-derived ID. Existing path-derived release tags are recognized when calculating the next release candidate and automatic-release baseline, so the first friendly-ID release continues the previous version sequence rather than restarting it.
 
+
 ## Versioning
 
 Each application is versioned independently under SemVer 2.0, tracked entirely as git tags of the form `<app-id>/vX.Y.Z` (final) and `<app-id>/vX.Y.Z-rc.N` (release candidate) — no files are edited or committed. The actual build/test/publish/tag steps live once, in the reusable `.github/workflows/build-and-publish-release-candidate.yml` (`workflow_call`), so the manual and automatic paths below never duplicate that logic.
 
 - **DEV-test artifacts** are built only by manually running `.github/workflows/publish-development-artifacts.yml` with the ID of a successful integrated non-`main` `Validation — Validate changed applications` run. The workflow verifies that the supplied run is a successful non-`main` branch push from the integrated validation flow, then rebuilds exactly that run's affected applications. Each deployable application output is uploaded as a GitHub Actions artifact retained for 30 days. Applications with Dockerfiles are also published to GitHub Container Registry as `ghcr.io/<owner>/<repository>/<app-id>:dev-<normalized-branch>-<commit-sha>`, where the branch segment is lowercased and made safe for a container tag. These are dev-test outputs: they create neither a Git tag nor a GitHub Release.
-- **Release candidates from a commit** (`.github/workflows/create-release-candidates-from-main.yml`) run only when started manually from the Actions tab. Provide the full Git commit SHA; the workflow finds every application that changed — directly or via a dependency — since _that application's own_ last release-candidate build (any bump level, whether or not it was ever promoted; see `src/auto-rc.ts`) and creates an RC for each one independently at a fixed `minor` bump. It is serialized per requested commit, and one application's build or test failure never blocks or cancels the others. An application with no RC tag yet always gets one (first-ever build), while one whose last RC already points at the supplied commit is skipped rather than rebuilt.
+- **Release candidates from a commit** (`.github/workflows/create-release-candidates-from-main.yml`) run only when started manually from the Actions tab. Provide the full Git commit SHA; the workflow finds every application that changed — directly or via a dependency — since *that application's own* last release-candidate build (any bump level, whether or not it was ever promoted; see `src/auto-rc.ts`) and creates an RC for each one independently at a fixed `minor` bump. It is serialized per requested commit, and one application's build or test failure never blocks or cancels the others. An application with no RC tag yet always gets one (first-ever build), while one whose last RC already points at the supplied commit is skipped rather than rebuilt.
 - **Single-application release candidates** (`.github/workflows/create-release-candidate-manually.yml`) remain available for one application id at a time, from a branch, tag, or commit SHA, with a chosen bump level (`major`/`minor`/`patch`, default `minor`) and optional `initial_version`. Use this when an explicit versioning choice is needed.
 - In both cases, the target version is always the app's latest **final** tag bumped by the selected level — never bumped from an outstanding, unpromoted rc. If an rc series for that exact target already exists, this continues it at the next `rc.N`; otherwise it starts at `rc.1`. An application with no final tag yet starts at `0.1.0` (or, for the manual workflow, an explicit `initial_version` input). Once the build and tests pass, the app's deployable build output — a React app's static `dist`/`build`/`out` directory, or a .NET app's `dotnet publish` output (the runnable `.exe` for a desktop app, or the dll + wwwroot a web API deploys from) — is tarred and published as an asset on a **GitHub Release** tagged `<app-id>/v<version>` (`src/artifact-publish-cli.ts` / `src/github-releases.ts`) — creating that release also creates the underlying git tag at the exact built commit, so there's no separate tag/push step.
 - **Promotion to final** (`.github/workflows/promote-release-candidate-to-production.yml`) is a separate manual step, taken after the rc's commit has already been merged to `main` through the normal PR flow — it is not the merge itself. It downloads the exact artifact published for the rc (`src/artifact-fetch-cli.ts`) and re-publishes those same bytes as a new release under the final version — never rebuilt from source — so what passed QA is what ships. A final tag is immutable: promotion fails if that final tag already exists.
@@ -185,11 +186,11 @@ The pipeline uses GitHub **Environments** to gate and record releases. The appro
 
 Before enabling these workflows, ensure the repository has GitHub Actions enabled and has a registered self-hosted runner with the tools described above. Repository administrators must create the following environments at **Settings → Environments**:
 
-| Environment         | What it protects                                                            | Recommended configuration                                                                                                                           |
-| ------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `release-candidate` | The actual release-candidate build, test, version, and publish job          | Add the release manager/team as required reviewers. Do not restrict deployment branches if manual candidates may be built from hotfix branches.     |
-| `qa`                | The decision that a tested release candidate may be promoted                | Add the QA team as required reviewers and enable **Prevent self-review**. This is an approval gate only; it does not create a QA deployment record. |
-| `production`        | Final versioning, artifact promotion, and delivery to the production target | Add the operations/release team as required reviewers, enable **Prevent self-review**, and restrict deployments to the protected `main` branch.     |
+| Environment | What it protects | Recommended configuration |
+| --- | --- | --- |
+| `release-candidate` | The actual release-candidate build, test, version, and publish job | Add the release manager/team as required reviewers. Do not restrict deployment branches if manual candidates may be built from hotfix branches. |
+| `qa` | The decision that a tested release candidate may be promoted | Add the QA team as required reviewers and enable **Prevent self-review**. This is an approval gate only; it does not create a QA deployment record. |
+| `production` | Final versioning, artifact promotion, and delivery to the production target | Add the operations/release team as required reviewers, enable **Prevent self-review**, and restrict deployments to the protected `main` branch. |
 
 GitHub approves a protected environment when any one configured required reviewer approves it. If separate people must approve QA and production, configure different teams for `qa` and `production`; GitHub's native required-reviewer rule does not require every listed reviewer to approve. For private or internal repositories, environment features and required reviewers require a plan that supports them; see [GitHub's environment availability documentation](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
 
