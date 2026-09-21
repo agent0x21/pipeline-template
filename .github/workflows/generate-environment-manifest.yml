@@ -67,7 +67,7 @@ jobs:
         with:
           name: environment-manifest
           path: .github/repository-discovery/.pipeline-artifacts/environment-manifest.json
-          retention-days: 90
+          retention-days: 30
           if-no-files-found: error
       - name: Summarize
         shell: pwsh
