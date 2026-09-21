@@ -20,7 +20,7 @@ on:
         description: Starting version (X.Y.Z) if this application has never been versioned before. Defaults to 0.1.0.
         required: false
         type: string
-        default: ''
+        default: ""
     outputs:
       version:
         value: ${{ jobs.build.outputs.version }}
