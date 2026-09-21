@@ -2,7 +2,7 @@
   "name": "web",
   "private": true,
   "version": "0.0.0",
-  "cicd": false,
+  "cicd": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
