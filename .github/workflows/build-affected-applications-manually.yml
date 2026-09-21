@@ -28,7 +28,7 @@ jobs:
     defaults:
       run:
         working-directory: .github/repository-discovery
-    runs-on: self-hosted
+    runs-on: [self-hosted, Windows, X64]
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       has_affected: ${{ steps.matrix.outputs.has_affected }}
@@ -205,6 +205,3 @@ jobs:
           $image = "ghcr.io/$repository/$application`:$env:IMAGE_TAG"
           docker image rm --force $env:LOCAL_IMAGE $image
           exit 0
-
-
-

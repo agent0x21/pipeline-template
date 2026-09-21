@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   discover:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Windows, X64]
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       has_affected: ${{ steps.matrix.outputs.has_affected }}
@@ -187,5 +187,3 @@ jobs:
           if ($env:PROJECT_FILE) { $lines += "| Project file | $env:PROJECT_FILE |" }
           if ($env:DOCKERFILE) { $lines += "| Dockerfile | $env:DOCKERFILE |" }
           $lines | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-
-

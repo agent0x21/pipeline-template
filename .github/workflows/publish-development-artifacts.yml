@@ -17,7 +17,7 @@ permissions:
 jobs:
   prepare:
     name: Validate source run and prepare build matrix
-    runs-on: self-hosted
+    runs-on: [self-hosted, Windows, X64]
     defaults:
       run:
         working-directory: .github/repository-discovery
